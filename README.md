@@ -1,4 +1,8 @@
-# newrogue
+# Rogue Adventure
+
+Version 1.0.0. Windows players can download `rogue-adventure.exe` from the
+[Releases](https://github.com/bsodcat/rogue-adventure/releases) page and run it; nothing else
+to install. Settings are kept in `%APPDATA%/newrogue/settings.json`.
 
 A python-tcod roguelike built world-first. The world is generated from one seed and simulated:
 terrain, rivers and lakes, biomes, towns, villages, inns, towers, ruins and caves joined by a
@@ -16,6 +20,9 @@ python -m pip install -r requirements.txt
 python main.py          # a random world
 python main.py 42       # the same world every time
 ```
+
+To build the exe yourself: `python -m PyInstaller --onefile --windowed --name rogue-adventure main.py`
+(it lands in `dist/`).
 
 | Key | Overworld | Local map |
 | --- | --- | --- |

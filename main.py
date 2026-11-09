@@ -6,6 +6,7 @@ import time
 
 import tcod
 
+from game import __version__
 from game.display import Display, make_tileset
 from game.engine import Engine
 from game.options import Settings
@@ -75,7 +76,7 @@ def main() -> None:
     engine = Engine.new(seed)
     engine.menu.settings = settings
     console = tcod.console.Console(SCREEN_W, SCREEN_H, order="F")
-    display = Display(settings)
+    display = Display(settings, title=f"Rogue Adventure {__version__}")
     engine.menu.area = display.area           # the menu works out sizes for this screen
     try:
         last_step = 0.0
