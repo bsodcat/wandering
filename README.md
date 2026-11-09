@@ -1,7 +1,10 @@
-# Rogue Adventure
+# Wandering
 
-Version 1.0.0. Windows players can download `rogue-adventure.exe` from the
-[Releases](https://github.com/bsodcat/rogue-adventure/releases) page and run it; nothing else
+**Gathering to Aevum: The Necromancer's Key**
+*Chapter II: Wandering the Mundane*
+
+Version 1.1.0. Windows players can download the exe from the
+[Releases](https://github.com/bsodcat/wandering/releases) page and run it; nothing else
 to install. Settings are kept in `%APPDATA%/newrogue/settings.json`.
 
 A python-tcod roguelike built world-first. The world is generated from one seed and simulated:
@@ -17,12 +20,46 @@ up watchtowers. Walk off the edge of a local map and you're in the next region.
 
 ```
 python -m pip install -r requirements.txt
-python main.py          # a random world
-python main.py 42       # the same world every time
+python main.py          # the title screen
+python main.py 42       # straight into world 42 (the same world every time)
 ```
 
-To build the exe yourself: `python -m PyInstaller --onefile --windowed --name rogue-adventure main.py`
+To build the exe yourself: `python -m PyInstaller --onefile --windowed --name wandering main.py`
 (it lands in `dist/`).
+
+## The title screen
+
+The game opens on its title screen (`game/title.py`), over a world drifting slowly past:
+
+- **New Game**: a random world, straight away.
+- **Create a World**: type a seed (or press `R` for a random one) and see the whole world it
+  makes before you start: its biomes, rivers and settlements, how many towns, villages and inns
+  there are, and the town you'll start in. The same seed always makes the same world.
+- **Dev Arena**: a 256x256 test ground with one of everything (see below).
+- **Options**: the display options.
+- **About**: what the game is, and who made it.
+- **Quit Game**.
+
+Under the choices are the keys for the menus and for playing, with the keys picked out.
+Up/Down (or W/S) choose, Enter picks, Esc goes back, and the mouse points and clicks. In a
+game, the pause menu's **Main menu** brings you back here.
+
+## The dev arena
+
+A 256x256 local map for testing (`game/arena.py`), always the same, always fair weather on a
+summer's morning, and explored from the start:
+
+- **The gallery**, north of where you start: every tile in the game on its own flagstone, a
+  row for each kind: ground, trees, ways, building, furniture and trades, fields.
+- **Pens**, south: one of each of the townsfolk (baker, butcher, innkeeper, farmer, fisherman,
+  lumberjack), each with a bit of their trade, then one of every animal.
+- **Ground**, north-west: a patch of every kind of ground, and a broadleaf wood, a pine wood
+  and a jungle.
+- **Water**, east: a river with a bridge, and a lake with a beach and a pier.
+- **A town and a village**, far south: built and peopled the same way as in the world, with
+  an inn, a bakery, a butcher's, houses, fields, pastures and a lumber camp.
+
+Point at anything to name it. Stairs there lead nowhere; leave by Esc, then Main menu.
 
 | Key | Overworld | Local map |
 | --- | --- | --- |
@@ -40,7 +77,7 @@ To build the exe yourself: `python -m PyInstaller --onefile --windowed --name ro
 | left click | note what's there in the log | note what's there in the log |
 | hold right button | walk there over regions you know | walk there over ground you know |
 | `m` | reveal the whole map (for development) | reveal this level |
-| Esc | pause menu: Resume, Options, Quit | same |
+| Esc | pause menu: Resume, Options, Main menu, Quit | same |
 | F11 or Alt+Enter | windowed / fullscreen | same |
 
 ## The screen
@@ -72,7 +109,7 @@ told you're exhausted. It doesn't hold you back yet.
 
 ## Options
 
-Esc opens the pause menu; Options sets these (arrow keys or click the `◄ ►`), and they apply
+Options (on the title screen, or Esc in a game) sets these (arrow keys or click the `◄ ►`), and they apply
 at once and are saved to `%APPDATA%/newrogue/settings.json`:
 
 | Setting | Choices |

@@ -150,7 +150,7 @@ def grid(output: tuple[int, int], cell: tuple[int, int], scale) -> tuple[int, in
 
 
 class Display:
-    def __init__(self, settings: Settings, title: str = "newrogue"):
+    def __init__(self, settings: Settings, title: str = "Wandering"):
         self.settings = settings
         fw, fh = settings.frame()
         self.context = tcod.context.new(width=fw, height=fh, title=title, vsync=True,

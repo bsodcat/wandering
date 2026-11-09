@@ -1,4 +1,5 @@
-"""newrogue: run with `python main.py [seed]`."""
+"""Wandering: run with `python main.py` for the title screen, or `python main.py <seed>` to go
+straight into that world."""
 from __future__ import annotations
 
 import sys
@@ -9,8 +10,10 @@ import tcod
 from game import __version__
 from game.display import Display, make_tileset
 from game.engine import Engine
-from game.options import Settings
+from game.hud import draw_menu
+from game.options import Menu, Settings
 from game.render import SCREEN_H, SCREEN_W, draw, map_cell
+from game.title import Title, draw_title
 
 STEP_DELAY = 0.05        # seconds between steps when walking to the pointer on a local map
 WORLD_STEP_DELAY = 0.15  # and on the overworld
@@ -32,8 +35,11 @@ def handle_mouse(engine: Engine, event) -> None:
         if engine.mouse and isinstance(event, tcod.event.MouseMotion):
             engine.menu.hover(*engine.mouse)
         elif engine.mouse and isinstance(event, tcod.event.MouseButtonDown)                 and event.button == tcod.event.MouseButton.LEFT:
-            if engine.menu.click(*engine.mouse) == "quit":
+            result = engine.menu.click(*engine.mouse)
+            if result == "quit":
                 engine.quitting = True
+            elif result == "title":
+                engine.to_title = True
         return
     if isinstance(event, tcod.event.MouseWheel):
         if engine.mouse and panels.over_log(*engine.mouse):
@@ -70,28 +76,80 @@ def walk(engine: Engine) -> None:
         engine.autopath, engine.goal = False, None
 
 
+def begin(action: tuple, menu: Menu) -> Engine:
+    """Starts what the title screen picked: ("new", seed, world) or ("arena",)."""
+    engine = Engine.arena() if action[0] == "arena" else Engine.new(action[1], action[2])
+    engine.menu = menu
+    menu.top = "pause"
+    menu.show(None)
+    return engine
+
+
+def title_event(title: Title, menu: Menu, event) -> tuple | None:
+    """A key or the mouse on the title screen (or the options screen over it). Returns what
+    to start, if anything."""
+    if isinstance(event, tcod.event.KeyDown):
+        if event.sym == tcod.event.KeySym.F11 or event.sym in (tcod.event.KeySym.RETURN, tcod.event.KeySym.KP_ENTER)                 and event.mod & tcod.event.Modifier.ALT:
+            menu.toggle_fullscreen()
+            return None
+        if menu.open:
+            menu.handle_key(event.sym, event.mod)
+            return None
+        return title.handle_key(event.sym, event.mod)
+    if not isinstance(event, (tcod.event.MouseMotion, tcod.event.MouseButtonDown)):
+        return None
+    x, y = event.integer_position
+    pressed = isinstance(event, tcod.event.MouseButtonDown) and event.button == tcod.event.MouseButton.LEFT
+    target = menu if menu.open else title
+    if isinstance(event, tcod.event.MouseMotion):
+        target.hover(x, y)
+    elif pressed:
+        result = target.click(x, y)
+        return result if target is title else None
+    return None
+
+
 def main() -> None:
     seed = int(sys.argv[1]) if len(sys.argv) > 1 else None
     settings = Settings.load()
-    engine = Engine.new(seed)
-    engine.menu.settings = settings
+    menu = Menu(settings)
+    title = Title(menu)
+    menu.top = None
+    engine = begin(("new", seed, None), menu) if seed is not None else None
     console = tcod.console.Console(SCREEN_W, SCREEN_H, order="F")
-    display = Display(settings, title=f"Rogue Adventure {__version__}")
-    engine.menu.area = display.area           # the menu works out sizes for this screen
+    display = Display(settings, title=f"Wandering {__version__}")
+    menu.area = display.area                  # the menu works out sizes for this screen
     try:
         last_step = 0.0
-        while not engine.quitting:
-            if engine.menu.changed:            # the options screen changed something
-                engine.menu.changed = False
+        while not (engine is not None and engine.quitting):
+            if menu.changed:                   # the options screen changed something
+                menu.changed = False
                 display.apply(settings)
-                engine.menu.area = display.area
+                menu.area = display.area
                 settings.save()
             _, cols, rows = display.layout()
             if (console.width, console.height) != (cols, rows):     # the window changed shape
                 console = tcod.console.Console(cols, rows, order="F")
-            draw(console, engine)
+            if engine is None:
+                menu.cols, menu.rows = cols, rows
+                draw_title(console, title, time.monotonic())
+                draw_menu(console, menu)
+            else:
+                draw(console, engine)
             display.present(console)
-            engine.menu.shown = (display.scale, cols, rows)
+            menu.shown = (display.scale, cols, rows)
+            if engine is None:
+                for event in tcod.event.wait(FRAME):
+                    if isinstance(event, tcod.event.Quit):
+                        return
+                    converted = event if isinstance(event, tcod.event.KeyDown) else display.convert(event)
+                    action = title_event(title, menu, converted) if converted is not None else None
+                    if action == ("quit",):
+                        return
+                    if action:
+                        engine = begin(action, menu)
+                        break
+                continue
             delay = STEP_DELAY if engine.level is not None else WORLD_STEP_DELAY
             # wake up every frame even with nothing pressed, so water runs and fires flicker
             for event in tcod.event.wait(min(delay, FRAME) if engine.autopath else FRAME):
@@ -109,6 +167,13 @@ def main() -> None:
                         engine.mouse = None
                     else:
                         handle_mouse(engine, converted)
+                if engine.to_title:
+                    break
+            if engine.to_title:                   # Main menu: back to the title screen
+                engine = None
+                menu.top = None
+                title.show("main")
+                continue
             if engine.autopath and time.monotonic() - last_step >= delay * 0.9:
                 walk(engine)
                 last_step = time.monotonic()

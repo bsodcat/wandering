@@ -30,8 +30,8 @@ from . import tiles as T
 from . import trees
 from .farming import crop_stage
 from .light import SEEN_FROM_AFAR, firelight
-from .climate import (MINUTES_PER_HOUR, Climate, Conditions, latitude, shelter_at, snow_cover,
-                      time_of_day)
+from .climate import (DAYS_PER_SEASON, MINUTES_PER_DAY, MINUTES_PER_HOUR, Climate, Conditions, latitude,
+                      shelter_at, snow_cover, time_of_day)
 from .level import Level
 from .localgen import LOCAL_H, LOCAL_W, make_level, node_local
 from .player import Player, expose, tire
@@ -106,15 +106,18 @@ class Engine:
         self.panels = Panels()             # what's laid over the map (game/ui.py)
         self.menu = Menu()                 # the pause menu and options (game/options.py)
         self.quitting = False              # Quit was clicked in the menu
+        self.to_title = False              # Main menu was picked: back to the title screen
+        self.fair = False                  # always fair weather (the dev arena)
         self.disturbed = False             # something happened that should stop a walk
         self.local_visible = np.zeros((1, 1), dtype=bool)
         self.update_view()
 
     @classmethod
-    def new(cls, seed: int | None = None) -> Engine:
-        """A fresh world, starting in its best town. The same seed makes the same world."""
-        seed = random.randrange(2**31) if seed is None else seed
-        world = generate(seed)
+    def new(cls, seed: int | None = None, world: World | None = None) -> Engine:
+        """A fresh world, starting in its best town. The same seed makes the same world (pass
+        `world` if it's already been generated from that seed)."""
+        if world is None:
+            world = generate(random.randrange(2**31) if seed is None else seed)
         start = next((s for s in world.sites if s.kind == "town"), None) or \
             next((s for s in world.sites if s.settled), None)
         if start is not None:
@@ -126,6 +129,25 @@ class Engine:
         engine = cls(world, Player(int(x), int(y)))
         engine.say(f"You set out from {where}. It's {SKY[engine.now.kind]}, {engine.now.air:.0f}°C.")
         engine.visit()
+        return engine
+
+    @classmethod
+    def arena(cls, seed: int = 1) -> Engine:
+        """The dev arena (game/arena.py), on a fine summer's morning, in the first town of world
+        `seed` (for the latitude and the season)."""
+        from .arena import SPAWN, build_arena
+        engine = cls.new(seed)
+        level = build_arena(engine.world, (engine.player.x, engine.player.y))
+        engine.levels[level.key] = level
+        engine.level = level
+        engine.lx, engine.ly = SPAWN
+        engine.fair = True
+        engine.minutes = (DAYS_PER_SEASON + 10) * MINUTES_PER_DAY + 11 * MINUTES_PER_HOUR   # early summer, late morning
+        engine.now = engine.weather()
+        engine.messages.clear()
+        engine.say("Welcome to the dev arena: every tile, person and animal in the game. "
+                   "Point at anything to name it; Esc, then Main menu, to leave.")
+        engine.pass_time(1 / 60)
         return engine
 
     # ------------------------------------------------------------- queries
@@ -169,7 +191,7 @@ class Engine:
     @property
     def leaves(self) -> int:
         """The kind of leaves over you (trees.NONE if open sky or a roof)."""
-        if self.level is None or not self.level.surface:
+        if self.level is None or self.level.underground:
             return trees.NONE
         return int(self.level.canopy[self.lx, self.ly])
 
@@ -202,6 +224,14 @@ class Engine:
     @property
     def snowy(self) -> bool:
         return not self.underground and snow_cover(self.world, self.player.x, self.player.y, self.minutes)
+
+    def weather(self) -> Conditions:
+        """The weather where you are now (always fair and mild in the dev arena)."""
+        c = self.climate.at(self.player.x, self.player.y, self.minutes)
+        if self.fair:
+            c = Conditions(air=max(c.air, 18.0), cloud=0.1, precip=0.0, wind=min(c.wind, 8.0), fog=0.0,
+                           light=c.light, kind="Clear")
+        return c
 
     def sight_radius(self) -> int:
         """How far you can make things out. On the overworld it's regions: less at night and in
@@ -314,6 +344,9 @@ class Engine:
         """Back up to the overworld, from the surface of a region."""
         if self.level is None:
             return False
+        if self.level.key[0] == "arena":
+            self.say("This is the dev arena: Esc, then Main menu, to leave.")
+            return False
         if not self.level.surface:
             self.say("You'll have to find the way back up first.")
             return False
@@ -381,6 +414,9 @@ class Engine:
         if key is None or (way == "down" and tile != T.STAIRS_DOWN) or (way == "up" and tile != T.STAIRS_UP):
             if way == "up" and level.surface and key is None:
                 return self.leave_region()
+            if key is None and tile in (T.STAIRS_DOWN, T.STAIRS_UP):
+                self.say("These stairs don't lead anywhere.")
+                return False
             self.say("There are no stairs here." if key is None else f"These stairs go {'down' if tile == T.STAIRS_DOWN else 'up'}.")
             return False
         nxt = self.get_level(key)
@@ -543,7 +579,7 @@ class Engine:
             before, before_time = self.now, time_of_day(self.lat, self.minutes)
             tire(p, dt, effort)
             self.minutes += dt * MINUTES_PER_HOUR
-            self.now = self.climate.at(p.x, p.y, self.minutes)
+            self.now = self.weather()
             if not self.underground:
                 self.news(before, before_time)
             for text in expose(p, dt, self.now, self.shelter, indoors=self.indoors, soak=soak,
@@ -603,7 +639,10 @@ class Engine:
             self.menu.toggle_fullscreen()
             return True
         if self.menu.open:
-            return self.menu.handle_key(sym, mod) != "quit"
+            result = self.menu.handle_key(sym, mod)
+            if result == "title":
+                self.to_title = True
+            return result != "quit"
         if sym == MENU_KEY:
             self.menu.show("pause")
             self.autopath = False

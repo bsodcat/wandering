@@ -1,6 +1,7 @@
 """Settings, and the pause menu and options screen that change them.
 
-Esc opens the pause menu (Resume, Options, Quit). The options screen sets:
+Esc opens the pause menu (Resume, Options, Main menu, Quit); the title screen opens the options
+screen on its own. The options screen sets:
 
 - Display: windowed or fullscreen (Alt+Enter or F11 toggles it any time).
 - Font: the classic Terminal bitmap font, or a TrueType font drawn at any size.
@@ -138,7 +139,7 @@ def size_text(size) -> str:
 
 # ----------------------------------------------------------------- the menus
 
-PAUSE_ITEMS = ["Resume", "Options", "Quit"]
+PAUSE_ITEMS = ["Resume", "Options", "Main menu", "Quit"]
 OPTION_ROWS = ["Display", "Font", "Font size", "Scale", "Back"]
 BOX_W = 46
 VALUE_X = 16                       # where a row's ◄ value ► starts, from the box's left edge
@@ -156,7 +157,9 @@ def row_y(rows: int, i: int, width: int = SCREEN_W, height: int = SCREEN_H) -> i
 
 
 class Menu:
-    """Which menu is open (None, "pause" or "options"), which row is picked, and the settings."""
+    """Which menu is open (None, "pause" or "options"), which row is picked, and the settings.
+    `top` is where Back from the options goes: the pause menu in a game, or (None) closed, back
+    to the title screen."""
 
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or Settings()
@@ -166,6 +169,7 @@ class Menu:
         self.area = SCREEN_GUESS         # the screen space there is (game/display.py keeps it up to date)
         self.cols, self.rows = SCREEN_W, SCREEN_H   # the screen in tiles, as it's drawn
         self.shown = None                # (scale, tiles across, tiles down) as last shown, from main.py
+        self.top: str | None = "pause"
 
     @property
     def open(self) -> bool:
@@ -239,7 +243,7 @@ class Menu:
         self.change("Display", 1)
 
     def activate(self) -> str | None:
-        """Enter on the picked row. Returns "quit" to leave the game."""
+        """Enter on the picked row. Returns "quit" to leave the game, "title" for the title screen."""
         item = self.items()[self.cursor]
         if item == "Resume":
             self.show(None)
@@ -247,14 +251,17 @@ class Menu:
             self.show("options")
         elif item == "Quit":
             return "quit"
+        elif item == "Main menu":
+            self.show(None)
+            return "title"
         elif item == "Back":
-            self.show("pause")
+            self.show(self.top)
         else:
             self.change(item, 1)
         return None
 
     def back(self) -> None:
-        self.show("pause" if self.screen == "options" else None)
+        self.show(self.top if self.screen == "options" else None)
 
     def handle_key(self, sym, mod: int = 0) -> str | None:
         """A key while a menu is open. Returns "quit" to leave the game."""

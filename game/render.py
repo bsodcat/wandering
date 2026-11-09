@@ -301,7 +301,7 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
     cx, cy = view[0].start, view[1].start
     t = level.tiles[view]
     ch, fg, bg = T.CHAR[t].copy(), T.FG[t].copy(), T.BG[t].copy()
-    if level.surface:                             # the fields through the year
+    if not level.underground:                     # the fields through the year
         stage = e.crop_stage
         for tile in T.FIELDS:
             look = CROP_LOOKS.get((tile, stage))
@@ -423,4 +423,4 @@ def draw(console: tcod.console.Console, e: Engine, seconds: float | None = None)
     if not e.player.alive:
         text = f" You {e.player.cause}. Esc quits. "
         console.print(max(0, (console.width - len(text)) // 2), console.height // 2 - 3, text, fg=(255, 255, 255), bg=(120, 20, 20))
-    draw_menu(console, e)
+    draw_menu(console, e.menu)

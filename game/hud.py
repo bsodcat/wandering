@@ -349,14 +349,14 @@ def draw_hud(console: tcod.console.Console, e: Engine, look: list[str], seconds:
 
 MENU_HINTS = {
     "pause": "Up/Down choose, Enter picks, Esc resumes",
+    "options_top": "Up/Down pick, Left/Right change, Esc closes",
     "options": "Up/Down choose, Left/Right change, Esc back",
 }
 
 
-def draw_menu(console: tcod.console.Console, e: Engine) -> None:
-    """The pause menu or the options screen, over a dimmed game."""
+def draw_menu(console: tcod.console.Console, menu) -> None:
+    """The pause menu or the options screen, over a dimmed game (or title screen)."""
     from .options import box, row_y, value_span
-    menu = e.menu
     if not menu.open:
         return
     console.rgb["fg"] = (console.rgb["fg"] * 0.3).astype(np.uint8)
@@ -382,7 +382,7 @@ def draw_menu(console: tcod.console.Console, e: Engine) -> None:
             console.print(left + 1, ry, value[:inner].center(inner), fg=TEXT)
         else:
             console.print(x + (w - len(item)) // 2, ry, item, fg=colour)
-    hint = MENU_HINTS[menu.screen]
+    hint = MENU_HINTS["options_top" if menu.screen == "options" and menu.top is None else menu.screen]
     console.print(x + (w - len(hint)) // 2, y + h - 2, hint, fg=DIM, bg=PANEL_BG)
     if menu.screen == "options":
         note = menu.note()

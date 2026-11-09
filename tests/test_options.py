@@ -144,7 +144,7 @@ class MenuTests(unittest.TestCase):
         x = box(n)[0] + 5
         m.click(x, row_y(n, n - 1))                      # Back
         self.assertEqual(m.screen, "pause")
-        self.assertEqual(m.click(x + 15, row_y(3, 2)), "quit")
+        self.assertEqual(m.click(x + 15, row_y(4, 3)), "quit")
 
     def test_alt_enter_and_f11_toggle_fullscreen_anywhere(self):
         e = Engine.new(1)
