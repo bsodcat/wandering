@@ -3,11 +3,17 @@
 Builders work on a region's local map after its land, rivers and roads are drawn. The roads
 from the world map all lead into the middle of a settlement, so places grow outward from there:
 
-- town:    a paved square with a well and market stalls, an inn, a dozen or so houses with
-           their doors facing the square, streets out to every door, walled fields outside,
-           and docks if it's on the coast
-- village: a green with a well, a handful of houses, paths, bigger fields; docks on the coast
-- inn:     a large inn by the road, a fenced paddock and a well
+- town:    a paved square with a well and market stalls, a named inn with a bar, a bakery
+           and a butcher's, a dozen or so houses with their doors facing the square, streets
+           out to every door, vegetable gardens and a pasture outside, docks if it's on the
+           coast, and a lumber camp if there are woods about
+- village: a green with a well, a handful of houses, paths, fields of whatever grain suits
+           the climate, a pasture or two, docks on the coast, a lumber camp in wooded country
+- inn:     a large named inn by the road, a paddock with horses and a well
+
+Every building is kept on the level (kind, name, box, door), and so is every place someone
+works or something grazes (fields, pastures, the pier, a fishing spot on the shore, the lumber
+camp): game/people.py puts the townsfolk and their animals there.
 - tower:   a round stone watchtower; stairs climb to a room and then the roof
 - ruins:   tumbled stone buildings, overgrown, one with stairs down to a crypt
 - cave:    a rocky outcrop with a way down into one to three cave levels
@@ -22,9 +28,11 @@ import random
 import numpy as np
 import tcod
 
+from . import farming
 from . import rooms
 from . import tiles as T
-from .level import Level
+from . import trees
+from .level import Building, Level, Place
 
 EDGE = 4
 DIRS4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
@@ -54,8 +62,10 @@ def facing(x0, y0, x1, y1, tx, ty) -> tuple[int, int]:
 
 
 def building(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, toward: tuple[int, int],
-             wall: int = T.WALL, floor: int = T.WOOD_FLOOR, torch: bool = True) -> tuple[tuple[int, int], tuple[int, int]]:
-    """Walls, a floor and a door on the side facing `toward`, with a torch on the wall beside it.
+             wall: int = T.WALL, floor: int = T.WOOD_FLOOR, torch: bool = True, kind: str = "house",
+             name: str = "a house", sign: bool = False) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Walls, a floor and a door on the side facing `toward`, with a torch on the wall beside it
+    (and a sign on the other side, for an inn). Kept on the level as a Building.
     Returns (door, the tile outside it)."""
     x1, y1 = x0 + w - 1, y0 + h - 1
     t = level.tiles
@@ -74,24 +84,31 @@ def building(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int,
         t[outside] = T.PATH
     if torch:
         hang_torch(level, rng, door, side, (x0, y0, x1, y1))
+    if sign:                 # beside the door if the torch left room, else one further along
+        hang_torch(level, rng, door, side, (x0, y0, x1, y1), T.SIGN, reach=(1, 2))
+    level.buildings.append(Building(kind, name, x0, y0, w, h, door))
     return door, outside
 
 
-def hang_torch(level: Level, rng: random.Random, door, side, box=None) -> None:
-    """A torch on the wall beside a door, on one side or the other, never on a corner."""
+def hang_torch(level: Level, rng: random.Random, door, side, box=None, tile: int = T.TORCH,
+               reach=(1,)) -> None:
+    """A torch (or a sign) on the wall beside a door, on one side or the other, never on a corner.
+    `reach` is how far along the wall from the door it may go, nearest first."""
     t = level.tiles
     along = (0, 1) if side[0] else (1, 0)
-    spots = [(door[0] + along[0] * k, door[1] + along[1] * k) for k in (-1, 1)]
-    if box is not None:
-        x0, y0, x1, y1 = box
-        spots = [(x, y) for x, y in spots if (y0 < y < y1 if side[0] else x0 < x < x1)]
-    spots = [s for s in spots if level.in_bounds(*s) and t[s] in (T.WALL, T.STONE_WALL)]
-    if spots:
-        t[rng.choice(spots)] = T.TORCH
+    for r in reach:
+        spots = [(door[0] + along[0] * k, door[1] + along[1] * k) for k in (-r, r)]
+        if box is not None:
+            x0, y0, x1, y1 = box
+            spots = [(x, y) for x, y in spots if (y0 < y < y1 if side[0] else x0 < x < x1)]
+        spots = [s for s in spots if level.in_bounds(*s) and t[s] in (T.WALL, T.STONE_WALL)]
+        if spots:
+            t[rng.choice(spots)] = tile
+            return
 
 
 def furnish(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, beds: int = 1,
-            hearth: bool = True, tables: int = 1, barrels: int = 0) -> None:
+            hearth: bool = True, tables: int = 1, barrels: int = 0, extra=(), middle=T.TABLE) -> None:
     """Furniture against the inside walls, leaving the tiles by the door clear."""
     t = level.tiles
     inside = [(x, y) for x in range(x0 + 1, x0 + w - 1) for y in range(y0 + 1, y0 + h - 1)]
@@ -100,7 +117,7 @@ def furnish(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, 
     walls = [c for c in inside if (c[0] in (x0 + 1, x0 + w - 2) or c[1] in (y0 + 1, y0 + h - 2))
              and not by_door(*c)]
     rng.shuffle(walls)
-    for tile, count in ((T.HEARTH, int(hearth)), (T.BED, beds), (T.BARREL, barrels)):
+    for tile, count in ((T.HEARTH, int(hearth)), (T.BED, beds), (T.BARREL, barrels), *extra):
         for _ in range(count):
             if walls:
                 t[walls.pop()] = tile
@@ -109,7 +126,7 @@ def furnish(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, 
     rng.shuffle(middle_tiles)
     for _ in range(tables):
         if middle_tiles:
-            t[middle_tiles.pop()] = T.TABLE
+            t[middle_tiles.pop()] = middle
 
 
 def place_box(level: Level, rng: random.Random, sizes, ring, centre=None, tries: int = 200, margin: int = 1):
@@ -187,8 +204,10 @@ def houses(level: Level, rng: random.Random, count: int, ring, sizes=((5, 8), (4
     return doors
 
 
-def fields(level: Level, rng: random.Random, count: int, ring, sizes=((8, 14), (4, 7))) -> list:
-    """Crops inside a fence, with a gate toward the middle."""
+def fields(level: Level, rng: random.Random, count: int, ring, sizes=((8, 14), (4, 7)), crop: int = T.CROPS,
+           kind: str = "field", animal: str = "") -> list:
+    """Crops (or a pasture, with a trough) inside a fence, with a gate toward the middle. Each is
+    kept as a Place. Returns the tiles outside the gates."""
     cx, cy = middle(level)
     gates = []
     t = level.tiles
@@ -199,12 +218,21 @@ def fields(level: Level, rng: random.Random, count: int, ring, sizes=((8, 14), (
         x0, y0, w, h = box
         x1, y1 = x0 + w - 1, y0 + h - 1
         t[x0: x1 + 1, y0: y1 + 1] = T.FENCE
-        t[x0 + 1: x1, y0 + 1: y1] = T.CROPS
+        t[x0 + 1: x1, y0 + 1: y1] = crop
         side = facing(x0, y0, x1, y1, cx, cy)
         gate = ((x1 if side[0] > 0 else x0), (y0 + y1) // 2) if side[0] else ((x0 + x1) // 2, (y1 if side[1] > 0 else y0))
         t[gate] = T.PATH
         gates.append((gate[0] + side[0], gate[1] + side[1]))
+        if kind == "pasture":     # a trough in the far corner from the gate
+            t[x1 - 1 if gate[0] < (x0 + x1) / 2 else x0 + 1, y1 - 1 if gate[1] < (y0 + y1) / 2 else y0 + 1] = T.TROUGH
+        inside = [(x, y) for x in range(x0 + 1, x1) for y in range(y0 + 1, y1) if T.WALK[t[x, y]]]
+        name = f"a pasture of {farming.ANIMALS[animal].plural}" if kind == "pasture" else f"a field of {T.TILES[crop].name}"
+        level.places.append(Place(kind, name, inside, animal))
     return gates
+
+
+def pastures(level: Level, rng: random.Random, count: int, ring, animal: str) -> list:
+    return fields(level, rng, count, ring, sizes=((8, 12), (4, 6)), crop=T.GRASS, kind="pasture", animal=animal)
 
 
 def docks(level: Level, rng: random.Random) -> tuple[int, int] | None:
@@ -230,69 +258,200 @@ def docks(level: Level, rng: random.Random) -> tuple[int, int] | None:
         return None
     _, x, y, dx, dy, run = best
     length = min(run, 10 if dx else 6)
+    end = []
     for i in range(1, length + 1):
         for side in (0, 1):
             px, py = x + dx * i + (side if dy else 0), y + dy * i + (side if dx else 0)
             if level.in_bounds(px, py) and T.WATERY[t[px, py]]:
                 t[px, py] = T.DOCK
+                if i >= length - 1:
+                    end.append((px, py))
+    if end:
+        level.places.append(Place("pier", "the end of the pier", end))
     box = place_box(level, rng, ((4, 5), (3, 4)), (2, 8), centre=(x - dx * 4, y - dy * 3), tries=60)
     if box is not None:
         x0, y0, w, h = box
-        building(level, rng, x0, y0, w, h, (x, y))
+        building(level, rng, x0, y0, w, h, (x, y), kind="shed", name="a boat shed")
         furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=0, barrels=2)
     return x, y
 
 
+def fishing_spot(level: Level) -> None:
+    """Without a pier, a spot on the bank of the river, lake or sea nearest the middle."""
+    if any(p.kind == "pier" for p in level.places):
+        return
+    t = level.tiles
+    water = np.isin(t, [T.WATER, T.DEEP_WATER])
+    p = np.pad(water, 1)
+    beside = p[:-2, 1:-1] | p[2:, 1:-1] | p[1:-1, :-2] | p[1:-1, 2:]
+    bank = beside & T.WALK[t] & ~T.WATERY[t] & ~T.ROOF[t]
+    bank[: EDGE + 1], bank[-EDGE - 1:], bank[:, : EDGE + 1], bank[:, -EDGE - 1:] = False, False, False, False
+    xs, ys = np.nonzero(bank)
+    if not len(xs):
+        return
+    cx, cy = middle(level)
+    d = (xs - cx) ** 2 + (2 * (ys - cy)) ** 2
+    i = int(np.argmin(d))
+    if d[i] > 40 ** 2:
+        return
+    x, y = int(xs[i]), int(ys[i])
+    spot = [(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if bank[x + dx, y + dy]]
+    level.places.append(Place("shore", "a fishing spot on the bank", spot))
+
+
+def lumber_camp(level: Level, rng: random.Random):
+    """Where the woods are thickest, not too near the middle: a woodpile, stumps where trees
+    have been felled, and room to work. Returns the tile to run a path from, or None if
+    there aren't the woods for it."""
+    t = level.tiles
+    trunk = np.isin(t, trees.TRUNKS)
+    if trunk.sum() < 15:
+        return None
+    w, h = t.shape
+    p = np.pad(trunk, ((6, 6), (3, 3))).astype(np.int32)
+    density = sum(p[6 + dx: w + 6 + dx, 3 + dy: h + 3 + dy] for dx in range(-6, 7) for dy in range(-3, 4))
+    cx, cy = middle(level)
+    xs, ys = np.ogrid[:w, :h]
+    far = (xs - cx) ** 2 + (2 * (ys - cy)) ** 2
+    ok = (T.CLEARABLE[t] & ~trunk & (far >= 14 ** 2))
+    ok[: EDGE + 4], ok[-EDGE - 4:], ok[:, : EDGE + 3], ok[:, -EDGE - 3:] = False, False, False, False
+    for dx in (1, 2):           # room for the woodpile beside it
+        ok[:-dx] &= T.CLEARABLE[t[dx:]] & ~trunk[dx:]
+    score = np.where(ok, density - np.sqrt(far) * 0.05, -1)
+    x, y = (int(v) for v in np.unravel_index(int(np.argmax(score)), score.shape))
+    if score[x, y] < 6:
+        return None
+    t[x: x + 3, y] = T.WOODPILE
+    near = [(int(a), int(b)) for a, b in zip(*np.nonzero(trunk))]
+    near.sort(key=lambda c: (c[0] - x - 1) ** 2 + (2 * (c[1] - y)) ** 2)
+    for c in near[: rng.randint(4, 7)]:
+        t[c] = T.STUMP
+    room = [(a, b) for a in range(x - 6, x + 9) for b in range(y - 3, y + 4)
+            if level.in_bounds(a, b) and T.WALK[t[a, b]] and not T.WATERY[t[a, b]]
+            and (a - x - 1) ** 2 + (2 * (b - y)) ** 2 <= 36]
+    level.places.append(Place("camp", "a lumber camp", room))
+    return (x + 1, y + 1) if T.WALK[t[x + 1, y + 1]] else (x + 1, y - 1)
+
+
+# ----------------------------------------------------------------- the inn and the shops
+
+INN_WORDS = (["Red", "Golden", "Laughing", "Sleeping", "Old", "Silver", "Drowned", "Green", "Wandering",
+              "Crooked", "Merry", "Blue", "Black", "Lonely", "Jolly", "Whistling"],
+             ["Stag", "Goose", "Lantern", "Anchor", "Plough", "Barrel", "Fox", "Bell", "Crown", "Boar",
+              "Kettle", "Heron", "Wheel", "Tankard", "Owl", "Hart"])
+
+
+def inn_name(rng: random.Random) -> str:
+    return f"The {rng.choice(INN_WORDS[0])} {rng.choice(INN_WORDS[1])}"
+
+
+def inn_building(level: Level, rng: random.Random, ring, sizes=((13, 15), (7, 8))):
+    """A big common room: a bar along the wall across from the door with kegs at its ends, a
+    hearth, tables in the middle and beds for travellers along the side walls, a sign and a
+    torch by the door. Returns the tile outside the door, or None if it didn't fit."""
+    box = place_box(level, rng, sizes, ring) or         place_box(level, rng, ((12, 13), (7, 7)), (ring[0], ring[1] + 12))   # smaller, further out
+    if box is None:
+        return None
+    x0, y0, w, h = box
+    x1, y1 = x0 + w - 1, y0 + h - 1
+    door, outside = building(level, rng, x0, y0, w, h, middle(level), kind="inn", name=inn_name(rng), sign=True)
+    t = level.tiles
+    if door[0] in (x0, x1):              # door on a side wall: the bar runs down the far one
+        bx = x0 + 1 if door[0] == x1 else x1 - 1
+        mid = (y0 + y1) // 2
+        bar = [(bx, y) for y in range(mid - 1, mid + 2)]
+        kegs = [(bx, mid - 2), (bx, mid + 2)]
+        beds = [(x, y) for x in range(x0 + 2, x1 - 1, 2) for y in (y0 + 1, y1 - 1)]
+    else:                                # door on the top or bottom: the bar runs along the other
+        by = y0 + 1 if door[1] == y1 else y1 - 1
+        mid = (x0 + x1) // 2
+        bar = [(x, by) for x in range(mid - 2, mid + 2)]
+        kegs = [(mid - 3, by), (mid + 2, by)]
+        beds = [(x, y) for x in (x0 + 1, x1 - 1) for y in range(y0 + 1, y1, 2)]
+    def by_door(c):
+        return abs(c[0] - door[0]) <= 1 and abs(c[1] - door[1]) <= 1
+    for c in bar:
+        t[c] = T.COUNTER
+    for c in kegs:
+        if t[c] == T.WOOD_FLOOR:
+            t[c] = T.BARREL
+    beds = [c for c in beds if t[c] == T.WOOD_FLOOR and not by_door(c)]
+    for c in beds[:6]:
+        t[c] = T.BED
+    hearths = [c for c in beds[6:] if t[c] == T.WOOD_FLOOR]
+    if hearths:
+        t[hearths[0]] = T.HEARTH
+    middle_tiles = [(x, y) for x in range(x0 + 3, x1 - 2) for y in range(y0 + 2, y1 - 1)
+                    if t[x, y] == T.WOOD_FLOOR and not by_door((x, y))
+                    and all(t[x + dx, y + dy] != T.COUNTER for dx in (-1, 0, 1) for dy in (-1, 0, 1))]
+    rng.shuffle(middle_tiles)
+    placed = []
+    for c in middle_tiles:
+        if len(placed) == 4:
+            break
+        if all(abs(c[0] - p[0]) > 1 or abs(c[1] - p[1]) > 1 for p in placed):
+            t[c] = T.TABLE
+            placed.append(c)
+    return outside
+
+
+def shop(level: Level, rng: random.Random, kind: str, name: str, ring):
+    """A bakery (bread ovens, flour, a counter) or a butcher's (meat hooks, a counter)."""
+    box = place_box(level, rng, ((6, 8), (5, 6)), ring)
+    if box is None:
+        return None
+    x0, y0, w, h = box
+    door, outside = building(level, rng, x0, y0, w, h, middle(level), kind=kind, name=name)
+    if kind == "bakery":
+        furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=2, barrels=2,
+                extra=((T.OVEN, 2),), middle=T.COUNTER)
+    else:
+        furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=2, barrels=1,
+                extra=((T.HOOKS, 2),), middle=T.COUNTER)
+    return outside
+
+
 # ----------------------------------------------------------------- builders
 
-def build_town(level: Level, site, rng: random.Random) -> None:
+def build_town(level: Level, site, rng: random.Random, land=None) -> None:
+    land = land or DEFAULT_LAND
     square(level, 7, 3, stalls=6)
-    cx, cy = middle(level)
-    inn = place_box(level, rng, ((11, 13), (6, 7)), (9, 16))
-    doors = []
-    if inn is not None:
-        x0, y0, w, h = inn
-        door, outside = building(level, rng, x0, y0, w, h, (cx, cy))
-        furnish(level, rng, x0, y0, w, h, beds=4, tables=3, barrels=2)
-        doors.append(outside)
+    doors = [inn_building(level, rng, (9, 16)),
+             shop(level, rng, "bakery", "the bakery", (9, 20)),
+             shop(level, rng, "butcher", "the butcher's", (9, 20))]
+    doors = [d for d in doors if d is not None]
     doors += houses(level, rng, rng.randint(11, 16), (9, 30))
     gates = fields(level, rng, rng.randint(3, 5), (30, 44))
+    gates += pastures(level, rng, 1, (30, 44), farming.herd_for(land))
     foot = docks(level, rng) if site.port else None
-    for start in doors + gates + ([foot] if foot else []):
+    camp = lumber_camp(level, rng)
+    for start in doors + gates + [s for s in (foot, camp) if s]:
         connect(level, start, ways(level), T.STREET if start in doors else T.PATH)
+    fishing_spot(level)
 
 
-def build_village(level: Level, site, rng: random.Random) -> None:
+def build_village(level: Level, site, rng: random.Random, land=None) -> None:
+    land = land or DEFAULT_LAND
     square(level, 4, 2, stalls=0)
     level.tiles[level.tiles == T.STREET] = T.GRASS
     doors = houses(level, rng, rng.randint(4, 7), (6, 20))
-    gates = fields(level, rng, rng.randint(3, 5), (16, 36), sizes=((10, 16), (5, 8)))
+    level.crop = farming.grain_for(land)
+    gates = fields(level, rng, rng.randint(3, 5), (16, 36), sizes=((10, 16), (5, 8)), crop=level.crop)
+    gates += pastures(level, rng, rng.randint(1, 2), (16, 38), farming.herd_for(land))
     foot = docks(level, rng) if site.port else None
+    camp = lumber_camp(level, rng)
     cx, cy = middle(level)
     hub = np.zeros(level.tiles.shape, bool)
     hub[cx - 1: cx + 2, cy - 1: cy + 2] = True
-    for start in doors + gates + ([foot] if foot else []):
+    for start in doors + gates + [s for s in (foot, camp) if s]:
         connect(level, start, ways(level) | hub)
+    fishing_spot(level)
 
 
-def build_inn(level: Level, site, rng: random.Random) -> None:
-    cx, cy = middle(level)
-    doors = []
-    inn = place_box(level, rng, ((12, 14), (6, 8)), (4, 12))
-    if inn is not None:
-        x0, y0, w, h = inn
-        door, outside = building(level, rng, x0, y0, w, h, (cx, cy))
-        furnish(level, rng, x0, y0, w, h, beds=5, tables=3, barrels=3)
-        doors.append(outside)
-    paddock = place_box(level, rng, ((8, 11), (4, 6)), (10, 18))
-    if paddock is not None:
-        x0, y0, w, h = paddock
-        t = level.tiles
-        t[x0: x0 + w, y0: y0 + h] = T.FENCE
-        t[x0 + 1: x0 + w - 1, y0 + 1: y0 + h - 1] = T.DIRT
-        gate = (x0 + w // 2, y0 if cy < y0 else y0 + h - 1)
-        t[gate] = T.PATH
-        doors.append((gate[0], gate[1] + (-1 if gate[1] == y0 else 1)))
+def build_inn(level: Level, site, rng: random.Random, land=None) -> None:
+    doors = [inn_building(level, rng, (4, 12), sizes=((14, 16), (7, 8)))]
+    doors = [d for d in doors if d is not None]
+    doors += fields(level, rng, 1, (10, 18), sizes=((8, 11), (4, 6)), crop=T.DIRT, kind="pasture", animal="horse")
     well = place_box(level, rng, ((1, 1), (1, 1)), (5, 9))
     if well is not None:
         level.tiles[well[0], well[1]] = T.WELL
@@ -327,7 +486,8 @@ def build_ruins(level: Level, site, rng: random.Random) -> None:
         box = place_box(level, rng, ((5, 10), (4, 7)), (0, 24))
         if box is not None:
             boxes.append(box)
-            building(level, rng, *box, middle(level), wall=T.STONE_WALL, floor=T.STONE_FLOOR, torch=False)
+            building(level, rng, *box, middle(level), wall=T.STONE_WALL, floor=T.STONE_FLOOR, torch=False,
+                     kind="ruin", name="a ruined building")
     t = level.tiles
     for x0, y0, w, h in boxes:
         for x in range(x0, x0 + w):
@@ -376,8 +536,15 @@ BUILDERS = {"town": build_town, "village": build_village, "inn": build_inn, "tow
             "ruins": build_ruins, "cave": build_cave}
 
 
-def build(level: Level, site, rng: random.Random) -> None:
-    BUILDERS[site.kind](level, site, rng)
+DEFAULT_LAND = farming.Land(0, 12.0, 0.5, -0.5)   # a temperate grassland, when none is given
+
+
+def build(level: Level, site, rng: random.Random, land=None) -> None:
+    builder = BUILDERS[site.kind]
+    if site.kind in ("town", "village", "inn"):
+        builder(level, site, rng, land)
+    else:
+        builder(level, site, rng)
 
 
 # ----------------------------------------------------------------- levels above and below

@@ -28,6 +28,8 @@ import numpy as np
 import tcod
 
 from . import biomes as B
+from . import farming
+from . import people
 from . import structures
 from . import tiles as T
 from . import trees
@@ -226,7 +228,7 @@ def generate_region(world, x: int, y: int) -> Level:
     level = Level(("region", x, y), region_name(world, x, y), window[inner].copy(),
                   indoor_air=19.0 if site is not None and site.settled else 14.0)
     if site is not None:
-        structures.build(level, site, random.Random(world.region_seed(x, y)))
+        structures.build(level, site, random.Random(world.region_seed(x, y)), farming.land_at(world, x, y))
     # Trees keep clear of every way in; then the crowns, from the trunks left standing here and
     # in the margin, so leaves reach across the border from trees in the next region.
     trees.clear_entrances(level.tiles, level.exits)
@@ -234,6 +236,8 @@ def generate_region(world, x: int, y: int) -> Level:
     canopy, boughs = trees.crowns(window)
     level.canopy, level.boughs = canopy[inner].copy(), boughs[inner].copy()
     trees.keep_clear(level.canopy, level.boughs, level.tiles, level.exits)
+    if site is not None:
+        people.populate(level, site, random.Random(world.region_seed(x, y) + 1))
     return level
 
 

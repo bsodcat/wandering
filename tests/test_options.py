@@ -7,7 +7,7 @@ import tcod
 from tcod.event import KeySym, Modifier
 
 from game.engine import Engine
-from game.options import (FONT_SIZES, RESOLUTIONS, Menu, Settings, available_fonts, box, row_y,
+from game.options import (FONT_SIZES, SCALES, Menu, Settings, available_fonts, box, fits, row_y,
                           value_span)
 from game.render import draw
 from game.ui import SCREEN_H, SCREEN_W
@@ -20,38 +20,66 @@ def screen_text(e):
 
 
 class SettingsTests(unittest.TestCase):
-    def test_every_choice_is_four_by_three(self):
-        for w, h in RESOLUTIONS:
-            self.assertEqual(w * 3, h * 4)
+    SCREEN = (2560, 1400)
+
+    def test_every_font_size_is_four_by_three(self):
         for size in FONT_SIZES[1:]:
             self.assertEqual(size[0] * 2, size[1])       # 120 x 45 tiles of 1:2 make 4:3
+            w, h = Settings(font_size=size).frame()
+            self.assertEqual(w * 3, h * 4)
 
-    def test_auto_font_size_fills_the_resolution(self):
-        s = Settings(resolution=(1200, 900))
-        self.assertEqual(s.cell(), (10, 20))
-        self.assertEqual(s.frame(), (1200, 900))
-        s.resolution = (1920, 1440)
-        self.assertEqual(s.cell(), (16, 32))
-        self.assertEqual(s.frame(), (1920, 1440))
-        s.font_size = (8, 16)
-        self.assertEqual(s.frame(), (960, 720))
+    def test_the_font_size_is_the_size_it_is_drawn_at(self):
+        s = Settings(font="Consolas", font_size=(8, 16))
+        self.assertEqual(s.frame(self.SCREEN), (960, 720))
+
+    def test_auto_scale_is_the_biggest_whole_number_that_fits(self):
+        s = Settings(font="Consolas", font_size=(8, 16))
+        self.assertEqual(s.factor(self.SCREEN), 1)       # 1920x1440 would be too tall
+        self.assertEqual(s.factor((3840, 2160)), 3)      # 2880x2160 fits a 4K screen
+        self.assertEqual(s.window_size((3840, 2160)), (2880, 2160))
+        s.font_size = (6, 12)
+        self.assertEqual(s.factor(self.SCREEN), 2)       # 720x540 shown 2x: 1440x1080
+        self.assertEqual(s.window_size(self.SCREEN), (1440, 1080))
+
+    def test_a_chosen_scale_never_overflows_the_screen(self):
+        s = Settings(font="Consolas", font_size=(6, 12), scale=4)
+        self.assertEqual(s.factor(self.SCREEN), 2)
+        s.scale = 1
+        self.assertEqual(s.window_size(self.SCREEN), (720, 540))
+
+    def test_too_big_for_the_screen_is_shrunk_to_fit(self):
+        s = Settings(font="Consolas", font_size=(20, 40))           # 2400x1800
+        self.assertEqual(s.factor((1920, 1040)), 0)
+        w, h = s.window_size((1920, 1040))
+        self.assertLessEqual((w, h), (1920, 1040))
+        self.assertAlmostEqual(w / h, 4 / 3, places=2)
+
+    def test_auto_font_size_keeps_terminal_native_and_fills_the_screen_otherwise(self):
+        self.assertEqual(Settings(font="Terminal").cell(self.SCREEN), (10, 20))
+        self.assertEqual(Settings(font="Terminal").cell((1024, 700)), (6, 12))   # 10x20 won't fit
+        self.assertEqual(Settings(font="Consolas").cell(self.SCREEN), (20, 40)
+                         if fits((2400, 1800), self.SCREEN) else (14, 28))
+        self.assertEqual(Settings(font="Consolas").cell((1920, 1040)), (10, 20))
 
     def test_saves_and_loads(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "sub", "settings.json")
-            Settings(fullscreen=True, resolution=(1600, 1200), font="Consolas", font_size=(12, 24)).save(path)
+            Settings(fullscreen=True, font="Consolas", font_size=(12, 24), scale=2).save(path)
             s = Settings.load(path)
-            self.assertEqual((s.fullscreen, s.resolution, s.font, s.font_size),
-                             (True, (1600, 1200), "Consolas", (12, 24)))
+            self.assertEqual((s.fullscreen, s.font, s.font_size, s.scale), (True, "Consolas", (12, 24), 2))
 
-    def test_bad_or_missing_settings_fall_back_to_defaults(self):
+    def test_old_and_bad_settings_fall_back_to_defaults(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(Settings.load(os.path.join(d, "none.json")), Settings())
             path = os.path.join(d, "bad.json")
-            with open(path, "w") as f:
-                f.write('{"resolution": [123, 45], "font": "Comic Sans", "font_size": [7, 7]}')
+            with open(path, "w") as f:      # an old file with a resolution, and nonsense
+                f.write('{"resolution": [1440, 1080], "font": "Comic Sans", "font_size": [7, 7], "scale": 9}')
             s = Settings.load(path)
-            self.assertEqual((s.resolution, s.font, s.font_size), ((1200, 900), "Terminal", "Auto"))
+            self.assertEqual((s.font, s.font_size, s.scale), ("Terminal", "Auto", "Auto"))
+            with open(path, "w") as f:
+                f.write('{"font": "Consolas", "font_size": [12, 24], "resolution": [1440, 1080]}')
+            s = Settings.load(path)
+            self.assertEqual((s.font, s.font_size), ("Consolas", (12, 24)))   # kept what still means something
             with open(path, "w") as f:
                 f.write("not json")
             self.assertEqual(Settings.load(path), Settings())
@@ -74,12 +102,6 @@ class MenuTests(unittest.TestCase):
         m.show("options")
         m.handle_key(KeySym.RIGHT)                       # Display
         self.assertTrue(m.settings.fullscreen and m.changed)
-        m.handle_key(KeySym.DOWN)                        # Resolution
-        before = m.settings.resolution
-        m.handle_key(KeySym.RIGHT)
-        self.assertEqual(RESOLUTIONS.index(m.settings.resolution), RESOLUTIONS.index(before) + 1)
-        m.handle_key(KeySym.LEFT)
-        self.assertEqual(m.settings.resolution, before)
         m.handle_key(KeySym.DOWN)                        # Font
         m.handle_key(KeySym.RIGHT)
         if len(available_fonts()) > 1:
@@ -87,19 +109,38 @@ class MenuTests(unittest.TestCase):
         m.handle_key(KeySym.DOWN)                        # Font size
         m.handle_key(KeySym.RIGHT)
         self.assertEqual(m.settings.font_size, FONT_SIZES[1])
+        m.handle_key(KeySym.DOWN)                        # Scale
+        m.handle_key(KeySym.RIGHT)
+        self.assertEqual(m.settings.scale, SCALES[1])
+        m.handle_key(KeySym.LEFT)
+        self.assertEqual(m.settings.scale, "Auto")
+
+    def test_menu_says_what_the_settings_come_to(self):
+        m = Menu(Settings(font="Consolas", font_size=(6, 12)))
+        m.area = (2560, 1400)
+        self.assertEqual(m.value("Scale"), "Auto (2x)")
+        self.assertEqual(m.note(), "Tiles of 6x12, shown 2x, pixel-sharp")
+        m.shown = (2, 213, 58)                           # as main.py reports it once shown
+        self.assertEqual(m.note(), "213x58 tiles of 6x12, shown 2x, pixel-sharp")
+        m.shown = None
+        m.settings.font_size = (20, 40)
+        m.area = (1920, 1040)
+        self.assertIn("too big", m.value("Font size"))
+        self.assertIn("shrunk", m.note())
+        m.settings.font, m.settings.font_size = "Terminal", "Auto"
+        self.assertIn("native", m.value("Font size"))
 
     def test_mouse_steps_values_and_picks_items(self):
         m = Menu()
         m.show("options")
         n = len(m.items())
         left, right = value_span(n)
-        y = row_y(n, 1)                                  # Resolution
-        before = RESOLUTIONS.index(m.settings.resolution)
+        y = row_y(n, 3)                                  # Scale
         m.click(right, y)
-        self.assertEqual(RESOLUTIONS.index(m.settings.resolution), before + 1)
+        self.assertEqual(m.settings.scale, 1)
         m.click(left, y)
         m.click(left, y)
-        self.assertEqual(RESOLUTIONS.index(m.settings.resolution), before - 1)
+        self.assertEqual(m.settings.scale, SCALES[-1])
         x = box(n)[0] + 5
         m.click(x, row_y(n, n - 1))                      # Back
         self.assertEqual(m.screen, "pause")
@@ -129,7 +170,7 @@ class MenuTests(unittest.TestCase):
             self.assertIn(item, text)
         e.menu.show("options")
         text = screen_text(e)
-        for item in ("Display", "Windowed", "Resolution", "1200 x 900", "Font", "Terminal", "Font size", "Auto"):
+        for item in ("Display", "Windowed", "Font", "Terminal", "Font size", "Auto", "Scale", "pixel-sharp"):
             self.assertIn(item, text)
 
 

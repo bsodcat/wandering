@@ -18,7 +18,7 @@ import tcod
 
 from . import tiles as T
 
-REACH = {T.HEARTH: 7.0, T.TORCH: 8.0}   # columns the light reaches
+REACH = {T.HEARTH: 7.0, T.TORCH: 8.0, T.OVEN: 5.0}   # columns the light reaches
 SEEN_FROM_AFAR = 0.2                       # firelight this strong shows up past your lantern
 FLAME_FG = [(255, 150, 50), (255, 200, 90), (240, 110, 40), (255, 230, 140)]
 

@@ -1,9 +1,17 @@
-"""The window: fonts, resolution, fullscreen, and getting the screen onto it.
+"""The window: fonts, fullscreen, scaling, and getting the screen onto it.
 
-The screen is always SCREEN_W x SCREEN_H tiles. It's drawn with the chosen font at the chosen
-tile size into a frame, and the frame is scaled to the chosen resolution (always 4:3). SDL then
-fits that into the window or the monitor, adding black bars rather than stretching it. When
-the frame is exactly the resolution it's copied pixel for pixel; otherwise it's smoothed.
+Tiles are drawn with the chosen font at exactly its size and shown at a whole-number scale,
+every pixel repeated, so they stay pixel-sharp. The screen is as many tiles as fit the window
+at that scale (`layout`): a bigger or wider window shows more tiles, never bigger pixels, and
+the panels stay pinned to its edges. Less than a tile left over at the edges is black.
+
+The scale is the one you chose, or for Auto the biggest at which the default 120 x 45 screen
+still fits. The screen is never smaller than 80 x 30 tiles; in a window too small even for
+that, the picture is shrunk to fit, smoothed.
+
+Windowed, the window starts at the default screen's size times the scale (within the usable
+part of the screen) and can then be resized, maximised or snapped to any shape. Fullscreen
+fills the monitor.
 
 Mouse positions come in as window pixels and go out as screen tiles, through the same scaling.
 """
@@ -15,11 +23,12 @@ import numpy as np
 import tcod
 import tcod.render
 import tcod.sdl.render
+from tcod.cffi import ffi, lib
 from tcod.sdl.render import LogicalPresentation, ScaleMode
 
 from . import fon
 from .options import FONTS, Settings, available_fonts, font_path
-from .ui import SCREEN_H, SCREEN_W
+from .ui import MIN_H, MIN_W, SCREEN_H, SCREEN_W
 
 
 def scale_tile(tile: np.ndarray, w: int, h: int) -> np.ndarray:
@@ -123,58 +132,120 @@ def make_tileset(font: str, cell: tuple[int, int]) -> tcod.tileset.Tileset:
     return tcod.tileset.get_default()
 
 
+TITLE_BAR = 40            # room left for the title bar and borders before they're known
+
+
+def grid(output: tuple[int, int], cell: tuple[int, int], scale) -> tuple[int, int, int]:
+    """(scale, tiles across, tiles down) for a window of `output` pixels: the chosen scale, or
+    for Auto the biggest the default screen fits at, then as many whole tiles as fit (no fewer
+    than MIN_W x MIN_H). A scale too big to leave even the smallest screen is brought down."""
+    (out_w, out_h), (cw, ch) = output, cell
+    if scale == "Auto":
+        k = max(1, min(out_w // (cw * SCREEN_W), out_h // (ch * SCREEN_H)))
+    else:
+        k = int(scale)
+    while k > 1 and (out_w // (cw * k) < MIN_W or out_h // (ch * k) < MIN_H):
+        k -= 1
+    return k, max(MIN_W, out_w // (cw * k)), max(MIN_H, out_h // (ch * k))
+
+
 class Display:
     def __init__(self, settings: Settings, title: str = "newrogue"):
         self.settings = settings
-        rw, rh = settings.resolution
-        self.context = tcod.context.new(width=rw, height=rh, title=title, vsync=True,
+        fw, fh = settings.frame()
+        self.context = tcod.context.new(width=fw, height=fh, title=title, vsync=True,
                                         tileset=make_tileset(settings.font, settings.cell()),
                                         sdl_window_flags=tcod.context.SDL_WINDOW_RESIZABLE)
         self.window = self.context.sdl_window
         self.renderer = self.context.sdl_renderer
         self.font_key = None
+        self.dest = (0, 0, fw, fh)          # where the picture went last frame, in output pixels
+        self.cols, self.rows = SCREEN_W, SCREEN_H   # the screen in tiles, as last shown
+        self.scale = 1                      # the whole-number scale last shown at (0: shrunk)
+        self.sized = False                  # the window has had its starting size
+        self.renderer.set_logical_presentation((0, 0), LogicalPresentation.DISABLED)
         self.apply(settings)
 
     def close(self) -> None:
         self.context.close()
 
+    # ------------------------------------------------------------- the screen
+
+    def screen_area(self, fullscreen: bool) -> tuple[int, int]:
+        """The room there is for the window's insides: the whole screen when fullscreen, else
+        the usable part (no taskbar) less the window's borders and title bar."""
+        display = lib.SDL_GetDisplayForWindow(self.window.p)
+        rect = ffi.new("SDL_Rect*")
+        get = lib.SDL_GetDisplayBounds if fullscreen else lib.SDL_GetDisplayUsableBounds
+        if not display or not get(display, rect):
+            return (1920, 1080) if fullscreen else (1920, 1080 - TITLE_BAR)
+        if fullscreen:
+            return rect.w, rect.h
+        top, left, bottom, right = self.window.border_size
+        if top == 0:
+            top = TITLE_BAR
+        return rect.w - left - right, rect.h - top - bottom
+
     def apply(self, settings: Settings) -> None:
-        """Puts the settings into effect: the font, the window and how the frame is scaled."""
+        """Puts the settings into effect: the font at its size, fullscreen or a window sized to
+        the picture times the scale."""
         self.settings = settings
-        key = (settings.font, settings.cell())
+        area = self.screen_area(settings.fullscreen)
+        cell = settings.cell(area)
+        key = (settings.font, cell)
         if key != self.font_key:
-            self.tileset = make_tileset(settings.font, settings.cell())
+            self.tileset = make_tileset(settings.font, cell)
             self.atlas = tcod.render.SDLTilesetAtlas(self.renderer, self.tileset)
             self.console_render = tcod.render.SDLConsoleRender(self.atlas)
             self.font_key = key
+        leaving_fullscreen = self.window.fullscreen and not settings.fullscreen
         if self.window.fullscreen != settings.fullscreen:
             self.window.fullscreen = settings.fullscreen
-        if not settings.fullscreen:
-            self.window.size = settings.resolution
-        self.renderer.set_logical_presentation(settings.resolution, LogicalPresentation.LETTERBOX)
+        if not settings.fullscreen and (not self.sized or leaving_fullscreen):
+            self.window.size = settings.window_size(area)     # after that, the window is yours to size
+            self.sized = True
+        self.area = area
+
+    # ------------------------------------------------------------- drawing
+
+    def layout(self) -> tuple[int, int, int]:
+        """(scale, tiles across, tiles down) for the window as it is now."""
+        out_w, out_h = self.renderer.output_size
+        return grid((out_w, out_h), (self.tileset.tile_width, self.tileset.tile_height), self.settings.scale)
 
     def present(self, console: tcod.console.Console) -> None:
-        rw, rh = self.settings.resolution
         texture = self.console_render.render(console)
-        exact = (texture.width, texture.height) == (rw, rh)
-        texture.scale_mode = ScaleMode.NEAREST if exact else ScaleMode.LINEAR
+        out_w, out_h = self.renderer.output_size
+        k, _, _ = self.layout()
+        w, h = texture.width * k, texture.height * k
+        sharp = w <= out_w and h <= out_h
+        if not sharp:                          # even the smallest screen won't fit: shrink it
+            shrink = min(out_w / texture.width, out_h / texture.height)
+            w, h = max(1, int(texture.width * shrink)), max(1, int(texture.height * shrink))
+        self.dest = ((out_w - w) // 2, (out_h - h) // 2, w, h)
+        self.cols, self.rows, self.scale = console.width, console.height, k if sharp else 0
+        texture.scale_mode = ScaleMode.NEAREST if sharp else ScaleMode.LINEAR
         self.renderer.draw_color = (0, 0, 0, 255)
         self.renderer.clear()
-        self.renderer.copy(texture, dest=(0, 0, rw, rh))
+        self.renderer.copy(texture, dest=self.dest)
         self.renderer.present()
 
+    # ------------------------------------------------------------- the mouse
+
     def tile_at(self, px: float, py: float) -> tuple[float, float] | None:
-        """The screen tile under a window pixel, or None if it's in the black bars."""
-        lx, ly = self.renderer.coordinates_from_window((px, py))
-        rw, rh = self.settings.resolution
-        tx, ty = lx * SCREEN_W / rw, ly * SCREEN_H / rh
-        if 0 <= tx < SCREEN_W and 0 <= ty < SCREEN_H:
+        """The screen tile under a window position, or None if it's off the picture."""
+        out_w, out_h = self.renderer.output_size
+        win_w, win_h = self.window.size
+        ox, oy = px * out_w / max(1, win_w), py * out_h / max(1, win_h)   # window points to pixels
+        x, y, w, h = self.dest
+        tx, ty = (ox - x) * self.cols / w, (oy - y) * self.rows / h
+        if 0 <= tx < self.cols and 0 <= ty < self.rows:
             return tx, ty
         return None
 
     def convert(self, event):
-        """A mouse event with its position in screen tiles (None if it's over the bars); other
-        events as they are."""
+        """A mouse event with its position in screen tiles (None if it's off the picture);
+        other events as they are."""
         if not isinstance(event, (tcod.event.MouseMotion, tcod.event.MouseButtonDown, tcod.event.MouseButtonUp)):
             return event
         tile = self.tile_at(*event.position)

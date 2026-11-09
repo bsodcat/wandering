@@ -29,9 +29,9 @@ CLEARING = 8          # no trunk this close (squared, on screen) to a way in
 TROPICS = 0.2         # broadleaf trees nearer the equator than this keep their leaves
 
 # What leaves can hang over: open land, water and fields, but not buildings or ways.
-CANOPY_OK = T.NATURAL | T.WATERY | np.isin(np.arange(len(T.TILES)), [T.FENCE, T.CROPS, T.RUBBLE])
+CANOPY_OK = T.NATURAL | T.WATERY | np.isin(np.arange(len(T.TILES)), [T.FENCE, T.RUBBLE, T.STUMP, T.TROUGH] + T.FIELDS)
 WAYS = [T.ROAD, T.STREET, T.PATH, T.BRIDGE, T.DOCK]
-SOLID = [T.WALL, T.STONE_WALL, T.FENCE, T.DOOR, T.TORCH]   # built things: a way beside one is a way in
+SOLID = [T.WALL, T.STONE_WALL, T.FENCE, T.DOOR, T.TORCH, T.SIGN]   # built things: a way beside one is a way in
 
 
 def thin(tiles: np.ndarray, rank: np.ndarray, ground: np.ndarray) -> None:

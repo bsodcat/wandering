@@ -15,8 +15,7 @@ from . import trees
 from .climate import clock_text, date_text, describe_wind, time_of_day
 from .engine import OVERLAYS, Engine
 from .player import NORMAL, body_status, feels_like, stamina_status, wet_status
-from .ui import (LEFT_HIDE, LEFT_SHOW, LEFT_W, RIGHT_HIDE, RIGHT_SHOW, RIGHT_W, RIGHT_X, SCREEN_H,
-                 SCREEN_W, STRIP_H, TAB_NAMES)
+from .ui import LEFT_HIDE, LEFT_SHOW, LEFT_W, RIGHT_W, STRIP_H, TAB_NAMES
 
 TEXT, DIM, TITLE = (220, 220, 220), (130, 130, 130), (255, 220, 120)
 PANEL_BG, HEADER_BG, BORDER = (14, 14, 20), (32, 32, 44), (70, 70, 85)
@@ -57,9 +56,9 @@ class Writer:
 
 def panel(console, x: int, width: int, border_x: int) -> None:
     """An opaque panel with a header row and a border line on its inner side."""
-    console.draw_rect(x, 0, width, SCREEN_H, ord(" "), fg=TEXT, bg=PANEL_BG)
+    console.draw_rect(x, 0, width, console.height, ord(" "), fg=TEXT, bg=PANEL_BG)
     console.draw_rect(x, 0, width, 1, ord(" "), bg=HEADER_BG)
-    console.draw_rect(border_x, 0, 1, SCREEN_H, ord("│"), fg=BORDER, bg=PANEL_BG)
+    console.draw_rect(border_x, 0, 1, console.height, ord("│"), fg=BORDER, bg=PANEL_BG)
 
 
 def button(console, box, text: str) -> None:
@@ -136,7 +135,7 @@ def draw_stats(console, e: Engine) -> None:
 
 def draw_info(console, e: Engine, look: list[str]) -> None:
     p, wd, c = e.player, e.world, e.now
-    w = Writer(console, RIGHT_X + 2, 2, RIGHT_W - 3)
+    w = Writer(console, e.panels.right_x + 2, 2, RIGHT_W - 3)
     w.line(date_text(e.minutes), TITLE)
     w.line(f"{clock_text(e.minutes)}  {time_of_day(e.lat, e.minutes)}")
     w.gap()
@@ -178,7 +177,7 @@ def draw_info(console, e: Engine, look: list[str]) -> None:
                 f"v        {'ground' if e.treetops else 'treetops'} view", ". or 5   wait an hour",
                 "z        rest 8 hours", "m        reveal level")
     keys += ("mouse    look, R: walk", "Tab      panel tabs", "c        stats panel", "F11      fullscreen", "Esc      menu, options")
-    w.y = SCREEN_H - len(keys) - 1
+    w.y = max(w.y + 1, console.height - len(keys) - 1)
     for text in keys + (f"Seed {wd.seed}",):
         w.line(text, DIM)
 
@@ -220,7 +219,7 @@ def mark(col: np.ndarray, xs: np.ndarray, ys: np.ndarray, x: float, y: float, co
 
 def draw_minimap(console, e: Engine, seconds: float) -> None:
     wd = e.world
-    x0, width = RIGHT_X + 2, RIGHT_W - 3
+    x0, width = e.panels.right_x + 2, RIGHT_W - 3
     blink = int(seconds * 3) % 2 == 0
     w = Writer(console, x0, 2, width)
     w.line("The world", TITLE)
@@ -285,25 +284,26 @@ def log_lines(e: Engine, width: int) -> list[str]:
 def draw_log(console, e: Engine) -> None:
     width = RIGHT_W - 3
     lines = log_lines(e, width)
-    rows = SCREEN_H - 4
+    rows = console.height - 4
     e.panels.log_scroll = min(e.panels.log_scroll, max(0, len(lines) - rows))
     end = len(lines) - e.panels.log_scroll
     shown = lines[max(0, end - rows): end]
-    w = Writer(console, RIGHT_X + 2, 2, width)
+    w = Writer(console, e.panels.right_x + 2, 2, width)
     for i, text in enumerate(shown):
         newest = end - len(shown) + i >= len(lines) - 3
         w.line(text, TEXT if newest else DIM)
     hint = "PgUp/PgDn, wheel: scroll" if not e.panels.log_scroll else f"{e.panels.log_scroll} lines back; End"
-    console.print(RIGHT_X + 2, SCREEN_H - 1, hint[:width], fg=DIM)
+    console.print(e.panels.right_x + 2, console.height - 1, hint[:width], fg=DIM)
 
 
 def draw_right(console, e: Engine, look: list[str], seconds: float) -> None:
-    panel(console, RIGHT_X, RIGHT_W, RIGHT_X)
+    right_x = e.panels.right_x
+    panel(console, right_x, RIGHT_W, right_x)
     for tab, x, width in e.panels.tab_spans():
         on = tab == e.panels.tab
         console.print(x, 0, f" {TAB_NAMES[tab]} ", fg=(20, 20, 20) if on else TAB_OFF,
                       bg=TAB_ON if on else HEADER_BG)
-    button(console, RIGHT_HIDE, "►")
+    button(console, e.panels.right_hide, "►")
     if e.panels.tab == "info":
         draw_info(console, e, look)
     elif e.panels.tab == "map":
@@ -323,8 +323,8 @@ def draw_strip(console, e: Engine) -> None:
     lines = log_lines(e, width)[-STRIP_H:]
     if not lines:
         return
-    y0 = SCREEN_H - len(lines)
-    band = console.rgb[x0: x1, y0: SCREEN_H]
+    y0 = console.height - len(lines)
+    band = console.rgb[x0: x1, y0:]
     band["bg"] = (band["bg"] * 0.3).astype(np.uint8)
     band["fg"] = (band["fg"] * 0.35).astype(np.uint8)
     for i, text in enumerate(lines):
@@ -342,7 +342,7 @@ def draw_hud(console: tcod.console.Console, e: Engine, look: list[str], seconds:
     if e.panels.right_open:
         draw_right(console, e, look, seconds)
     else:
-        button(console, RIGHT_SHOW, "◄")
+        button(console, e.panels.right_show, "◄")
 
 
 # ----------------------------------------------------------------- the pause menu and options
@@ -362,13 +362,13 @@ def draw_menu(console: tcod.console.Console, e: Engine) -> None:
     console.rgb["fg"] = (console.rgb["fg"] * 0.3).astype(np.uint8)
     console.rgb["bg"] = (console.rgb["bg"] * 0.3).astype(np.uint8)
     items = menu.items()
-    x, y, w, h = box(len(items))
+    x, y, w, h = box(len(items), console.width, console.height)
     console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
     title = " Paused " if menu.screen == "pause" else " Options "
     console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
-    left, right = value_span(len(items))
+    left, right = value_span(len(items), console.width, console.height)
     for i, item in enumerate(items):
-        ry = row_y(len(items), i)
+        ry = row_y(len(items), i, console.width, console.height)
         picked = i == menu.cursor
         if picked:
             console.draw_rect(x + 1, ry, w - 2, 1, ord(" "), bg=HEADER_BG)
@@ -385,7 +385,5 @@ def draw_menu(console: tcod.console.Console, e: Engine) -> None:
     hint = MENU_HINTS[menu.screen]
     console.print(x + (w - len(hint)) // 2, y + h - 2, hint, fg=DIM, bg=PANEL_BG)
     if menu.screen == "options":
-        s = menu.settings
-        fw, fh = s.frame()
-        note = f"Drawn at {fw}x{fh}" + (" (sharpest)" if (fw, fh) == tuple(s.resolution) else ", scaled")
+        note = menu.note()
         console.print(x + (w - len(note)) // 2, y + h, note, fg=DIM)

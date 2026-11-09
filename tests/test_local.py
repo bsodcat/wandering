@@ -173,7 +173,7 @@ class StructureTests(unittest.TestCase):
     def test_villages(self):
         for seed, v in sites("village", (1,))[:4]:
             lvl = self.check_doors_reachable(seed, v, 3)
-            self.assertTrue((lvl.tiles == T.CROPS).any())
+            self.assertTrue(np.isin(lvl.tiles, T.FIELDS).any())
 
     def test_inns(self):
         for seed, inn in sites("inn")[:3]:

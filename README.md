@@ -38,10 +38,12 @@ python main.py 42       # the same world every time
 
 ## The screen
 
-The window is 120x45 tiles of 10x20 pixels: 1200x900, 4:3. If you resize it, it keeps that
-shape. The map fills the whole window, centred on you, and everything else lies on top of it
-(`game/ui.py` lays it out, `game/hud.py` draws it). Hiding a panel just uncovers more map: the
-window and the map under it stay put.
+The screen is as many tiles as fit the window: 120x45 by default (1200x900 with Terminal), and
+more if you make the window bigger, wider or taller, or maximise it. Tiles always stay their
+pixel-sharp size, so a bigger window shows more of the world rather than bigger pixels. The map
+fills the whole screen, centred on you, and the panels lie on top of it pinned to the left and
+right edges (`game/ui.py` lays it out, `game/hud.py` draws it). Hiding a panel just uncovers
+more map: the window and the map under it stay put.
 
 - **Stats** (left; `c` or its `◄` button hides it, the `►` tab in the corner brings it back):
   bars for health, stamina and wetness, a warmth gauge from cold to hot, what the air feels
@@ -69,13 +71,21 @@ at once and are saved to `%APPDATA%/newrogue/settings.json`:
 | Setting | Choices |
 | --- | --- |
 | Display | Windowed, Fullscreen (also F11 or Alt+Enter) |
-| Resolution | 800x600 to 2048x1536, all 4:3. Windowed, it's the window's size; fullscreen, the game is drawn at it and scaled to fill the screen, with black bars at the sides |
 | Font | Terminal (the Windows bitmap font), Consolas, Lucida Console, Courier New |
-| Font size | Auto, or 8x16 to 20x40. Auto picks the tile that fills the resolution exactly (sharpest); other sizes are drawn at that size and scaled |
+| Font size | Auto, or 6x12 to 20x40: the size of a tile, drawn at exactly that many pixels. Auto keeps Terminal at its own 10x20 when the default 120x45 screen fits, and otherwise picks the biggest size that does |
+| Scale | Auto, 1x, 2x, 3x, 4x. Always a whole number with every pixel repeated, so small fonts stay pixel-sharp. Auto is the biggest at which the default 120x45 screen fits the window; whatever room is left becomes more tiles |
 
-`game/display.py` does the window: it draws the 120x45 screen with the font into a frame,
-scales the frame to the resolution, and lets SDL fit that to the window or monitor. Mouse
-positions go back through the same scaling. TrueType fonts are measured and redrawn so their
+The window starts at the default screen's size times the scale (within the usable part of
+your screen), and from then on you can resize, maximise or snap it to any shape: the screen
+gains or loses whole tiles, and less than a tile left over at the edges is black. Fullscreen
+fills the monitor the same way. The screen never gets smaller than 80x30 tiles; in a window
+too small even for that, it's shrunk to fit and smoothed. The note under the options box says
+what you've got ("200x53 tiles of 10x20, shown 1x, pixel-sharp").
+
+`game/display.py` does the window: it measures the screen through SDL, works out how many
+tiles fit at the scale (`grid`), draws them with the font into a picture of exactly that many
+pixels, and copies it into the window at the whole-number scale. When the window changes
+shape the screen is rebuilt at the new size. Mouse positions go back through the same scaling. TrueType fonts are measured and redrawn so their
 letters fill the tiles (libtcod draws Consolas at half size), and block and line characters
 are drawn by hand so bars and the minimap join up whatever the font.
 
@@ -205,12 +215,46 @@ the edges:
 
 | Site | Local map |
 | --- | --- |
-| Town | paved square with a well and market stalls, an inn, 11-16 houses with hearths, beds and tables, doors facing the square, streets to every door, fenced fields outside, docks if it's a port |
-| Village | a green with a well, 4-7 houses, paths, larger fields, docks on the coast |
-| Inn | a big inn on the road, a fenced paddock, a well |
+| Town | paved square with a well and market stalls, a named inn (bar, kegs, tables, beds, a sign by the door), a bakery with bread ovens, a butcher's with meat hooks, 11-16 houses with hearths, beds and tables, doors facing the square, streets to every door, vegetable gardens and a pasture outside, docks if it's a port, a lumber camp if it's wooded |
+| Village | a green with a well, 4-7 houses, paths, larger fields of the grain that suits the climate, a pasture or two, docks on the coast, a lumber camp if it's wooded |
+| Inn | a big named inn on the road, a paddock with horses, a well |
 | Tower | a round stone watchtower; stairs up to a room, then the roof, where you can see the land for miles around |
 | Ruins | roofless stone buildings, tumbled and overgrown; the biggest has stairs down to a crypt (rooms and corridors) |
 | Cave | a rocky outcrop with a way down into 1-3 cave levels (cellular automaton caverns with pools) |
+
+**People and animals** (`game/people.py`, `game/farming.py`). Settlements are lived in:
+
+| Who | Where | Works |
+| --- | --- | --- |
+| Baker | the bakery, by the ovens | 04:00-13:00 |
+| Fisherman | the end of the pier, or a spot on the bank of the nearest river, lake or sea | 05:00-15:00 |
+| Farmer | the fields (towns: the gardens) | 06:00-18:00 |
+| Lumberjack | the lumber camp: a woodpile and fresh stumps where the woods are thickest | 07:00-17:00 |
+| Butcher | the butcher's, by the counter | 07:00-16:00 |
+| Innkeeper | behind the bar; sleeps at the inn | 09:00-24:00 |
+
+Towns have a baker, a butcher, an innkeeper and farmers; villages have farmers; both have a
+fisherman if there's water to fish and a lumberjack if there are woods to cut. Everyone has a
+name and a house. After work they spend the evening at the inn (or on the village green) and
+go to bed at 21:00. They walk where they're going as the clock runs, wander about while they
+work, and step round each other. If you've been away or rested, everyone is just where they'd
+be by now. Point at someone to see who they are and what they're doing; walk into them to
+talk (the first time, they introduce themselves) and step past each other.
+
+Fields and herds suit the climate (the yearly mean temperature and how wet it is):
+
+| Grain | Where | Herd | Where |
+| --- | --- | --- | --- |
+| Wheat | temperate lands | Cows | grassland, savanna |
+| Rye | the cold north, taiga, uplands | Sheep | hills, steppe |
+| Rice paddies | hot and wet | Goats | mountains, desert, scrub |
+| Millet | hot and dry | Pigs | forest, jungle, swamp |
+| | | Reindeer | tundra, taiga, the cold |
+
+Pastures are fenced with a trough; hens peck about the houses everywhere. Grain fields go
+through the year: green shoots in spring, tall and green, ripe and gold at midsummer, stubble
+after the harvest, then fallow until spring (always growing in the tropics; rice paddies are
+flooded while the rice comes up).
 
 **Levels** (`game/level.py`) are named by keys like `("region", x, y)`, `("cave", x, y, 2)` or
 `("tower", x, y, 1)`. Stairs are exits pointing at another key, and you arrive at the exit
@@ -236,6 +280,8 @@ game/localgen.py   region local maps: seamless terrain, rivers, roads
 game/structures.py towns, villages, inns, docks, towers, ruins, caves, and the levels below and above
 game/tiles.py      local tile table: looks, walking, sight, step time, roofs
 game/trees.py      trunks and crowns, seasons, keeping ways in clear
+game/people.py     townsfolk and animals: who lives where, their hours, walking, talking
+game/farming.py    which grain and herd suit a climate, and the fields through the year
 game/light.py      firelight from hearths and torches, and how it flickers
 game/level.py      a local map, its stairs and its canopy layer
 game/climate.py    calendar, daylight, weather, temperature

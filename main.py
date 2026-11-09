@@ -76,15 +76,21 @@ def main() -> None:
     engine.menu.settings = settings
     console = tcod.console.Console(SCREEN_W, SCREEN_H, order="F")
     display = Display(settings)
+    engine.menu.area = display.area           # the menu works out sizes for this screen
     try:
         last_step = 0.0
         while not engine.quitting:
             if engine.menu.changed:            # the options screen changed something
                 engine.menu.changed = False
                 display.apply(settings)
+                engine.menu.area = display.area
                 settings.save()
+            _, cols, rows = display.layout()
+            if (console.width, console.height) != (cols, rows):     # the window changed shape
+                console = tcod.console.Console(cols, rows, order="F")
             draw(console, engine)
             display.present(console)
+            engine.menu.shown = (display.scale, cols, rows)
             delay = STEP_DELAY if engine.level is not None else WORLD_STEP_DELAY
             # wake up every frame even with nothing pressed, so water runs and fires flicker
             for event in tcod.event.wait(min(delay, FRAME) if engine.autopath else FRAME):

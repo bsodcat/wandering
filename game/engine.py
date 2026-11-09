@@ -25,8 +25,10 @@ import tcod
 from tcod.event import KeySym, Modifier
 
 from . import biomes as B
+from . import people
 from . import tiles as T
 from . import trees
+from .farming import crop_stage
 from .light import SEEN_FROM_AFAR, firelight
 from .climate import (MINUTES_PER_HOUR, Climate, Conditions, latitude, shelter_at, snow_cover,
                       time_of_day)
@@ -170,6 +172,11 @@ class Engine:
         if self.level is None or not self.level.surface:
             return trees.NONE
         return int(self.level.canopy[self.lx, self.ly])
+
+    @property
+    def crop_stage(self) -> str:
+        """Where the grain is in its year, here and now."""
+        return crop_stage(self.lat, self.minutes)
 
     @property
     def foliage(self) -> str:
@@ -328,6 +335,11 @@ class Engine:
             self.say("The water is too deep to wade." if tile == T.DEEP_WATER
                      else f"The {T.TILES[tile].name} is in the way.")
             return False
+        someone = people.actor_at(level, nx, ny)
+        if someone is not None:              # talk, and step past each other
+            self.say(people.talk(someone, level, self))
+            someone.x, someone.y = self.lx, self.ly
+            someone.goal, someone.path = None, []
         was_inside = self.indoors
         self.lx, self.ly = nx, ny
         if (nx, ny) in level.exits:
@@ -405,7 +417,16 @@ class Engine:
         level = self.level
         tile = T.TILES[level.tiles[x, y]]
         here = (x, y) == (self.lx, self.ly)
-        lines = ["You, on " + tile.name if here else tile.name.capitalize()]
+        name = tile.name
+        if tile.id in T.GRAINS:
+            name += ", " + people.crop_words(self.crop_stage)
+        lines = ["You, on " + name if here else name.capitalize()]
+        someone = people.actor_at(level, x, y)
+        if someone is not None and self.local_visible[x, y] and not here:
+            lines = people.describe(someone) + lines
+        inside = level.building_at(x, y)
+        if inside is not None and inside.name:
+            lines.append(f"{'In' if T.ROOF[tile.id] else 'At'} {inside.name}")
         key = level.exits.get((x, y))
         if key is not None:
             dest = self.levels.get(key)
@@ -530,6 +551,8 @@ class Engine:
                 self.say(text)
                 self.disturbed = True       # a warning about your body stops a walk
             soak = 0.0
+        if self.level is not None:
+            people.advance(self.level, self.minutes, self)
         self.update_view()
 
     def news(self, before: Conditions, before_time: str) -> None:

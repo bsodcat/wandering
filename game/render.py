@@ -23,13 +23,14 @@ import tcod
 from . import biomes as B
 from . import tiles as T
 from . import trees
+from .farming import CROP_LOOKS
 from .light import firelight, flame, flicker
 from .engine import OVERLAYS, Engine
 from .hud import draw_hud, draw_menu
 from .ui import SCREEN_H, SCREEN_W
 from .worldgen import SITE_KINDS
 
-MAP_W, MAP_H = SCREEN_W, SCREEN_H      # the map is the whole window; the panels lie over it
+MAP_W, MAP_H = SCREEN_W, SCREEN_H      # the map's default size: the whole screen (the panels lie over it)
 CURSOR_BG, ROUTE_BG = np.array((200, 190, 90)), np.array((90, 120, 170))
 RIVER_FG, ROAD_FG, BRIDGE_FG = (90, 150, 235), (185, 150, 95), (200, 160, 100)
 
@@ -47,22 +48,22 @@ TEMPERATURE = [(-35, (120, 40, 160)), (-15, (40, 60, 200)), (0, (90, 200, 230)),
 MOISTURE = [(0, (190, 160, 100)), (0.35, (170, 190, 100)), (0.65, (60, 150, 120)), (1, (20, 60, 160))]
 
 
-def follow(px: int, py: int) -> tuple[int, int]:
-    """The map cell at the top-left of the screen, so that (px, py) is in the middle. It keeps
-    you in the middle even by the edge of the map (past it is blank), so the panels at the
-    sides never cover you."""
-    return px - MAP_W // 2, py - MAP_H // 2
+def follow(px: int, py: int, cols: int = MAP_W, rows: int = MAP_H) -> tuple[int, int]:
+    """The map cell at the top-left of a cols x rows screen, so that (px, py) is in the middle.
+    It keeps you in the middle even by the edge of the map (past it is blank), so the panels
+    at the sides never cover you."""
+    return px - cols // 2, py - rows // 2
 
 
 def camera(e: Engine) -> tuple[int, int]:
-    return follow(e.player.x, e.player.y)
+    return follow(e.player.x, e.player.y, e.panels.width, e.panels.height)
 
 
-def window(ox: int, oy: int, width: int, height: int):
-    """The part of a width x height map on screen from origin (ox, oy): (the map slices, the
-    screen cell its top-left lands on, its size)."""
+def window(ox: int, oy: int, width: int, height: int, cols: int = MAP_W, rows: int = MAP_H):
+    """The part of a width x height map on a cols x rows screen from origin (ox, oy): (the map
+    slices, the screen cell its top-left lands on, its size)."""
     x0, y0 = max(ox, 0), max(oy, 0)
-    x1, y1 = min(ox + MAP_W, width), min(oy + MAP_H, height)
+    x1, y1 = min(ox + cols, width), min(oy + rows, height)
     vw, vh = max(0, x1 - x0), max(0, y1 - y0)
     return (slice(x0, x0 + vw), slice(y0, y0 + vh)), (x0 - ox, y0 - oy), (vw, vh)
 
@@ -71,12 +72,12 @@ def view_origin(e: Engine) -> tuple[int, int]:
     """The map cell at the top-left of the screen."""
     if e.level is None:
         return camera(e)
-    return follow(e.lx, e.ly)
+    return follow(e.lx, e.ly, e.panels.width, e.panels.height)
 
 
 def map_cell(e: Engine, sx: int, sy: int) -> tuple[int, int] | None:
     """The map cell under screen cell (sx, sy), or None if that's not over the map."""
-    if not (0 <= sx < MAP_W and 0 <= sy < MAP_H) or e.panels.covers(sx, sy):
+    if not (0 <= sx < e.panels.width and 0 <= sy < e.panels.height) or e.panels.covers(sx, sy):
         return None
     ox, oy = view_origin(e)
     x, y = ox + sx, oy + sy
@@ -95,7 +96,7 @@ def draw_pointer(console: tcod.console.Console, e: Engine) -> None:
     if e.autopath and e.goal is not None:
         for x, y in e.route(*e.goal):
             sx, sy = x - ox, y - oy
-            if 0 <= sx < MAP_W and 0 <= sy < MAP_H:
+            if 0 <= sx < e.panels.width and 0 <= sy < e.panels.height:
                 rgb["bg"][sx, sy] = (rgb["bg"][sx, sy] * 0.4 + ROUTE_BG * 0.6).astype(np.uint8)
     sx, sy = e.mouse
     rgb["bg"][sx, sy] = (rgb["bg"][sx, sy] * 0.3 + CURSOR_BG * 0.7).astype(np.uint8)
@@ -149,7 +150,7 @@ def burn(ch, fg, bg, t, visible, strength, phase, dark, base_fg, base_bg, second
     amount = (strength * flicker(phase, seconds) * dark * lit)[..., None]
     fg += base_fg * amount * 0.9 + amount * FIRE_FG
     bg += base_bg * amount * 0.8 + amount * FIRE_BG
-    flames = np.isin(t, [T.HEARTH, T.TORCH]) & visible
+    flames = np.isin(t, [T.HEARTH, T.TORCH, T.OVEN]) & visible
     if flames.any():
         step, colours = flame(phase, seconds)
         fg[flames] = colours[flames]
@@ -168,7 +169,7 @@ def speckle(xs: np.ndarray, ys: np.ndarray, minutes: float, period: int = 60) ->
 def draw_map(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -> None:
     w = e.world
     ox, oy = camera(e)
-    view, (sx0, sy0), (vw, vh) = window(ox, oy, w.width, w.height)
+    view, (sx0, sy0), (vw, vh) = window(ox, oy, w.width, w.height, console.width, console.height)
     cx, cy = view[0].start, view[1].start
     biome = w.biome[view]
     ch = B.CHAR[biome].copy()
@@ -295,11 +296,18 @@ def leaf_layer(canopy, boughs, look: str, gx, gy):
 
 def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -> None:
     level = e.level
-    ox, oy = follow(e.lx, e.ly)
-    view, (sx0, sy0), (vw, vh) = window(ox, oy, level.width, level.height)
+    ox, oy = follow(e.lx, e.ly, console.width, console.height)
+    view, (sx0, sy0), (vw, vh) = window(ox, oy, level.width, level.height, console.width, console.height)
     cx, cy = view[0].start, view[1].start
     t = level.tiles[view]
     ch, fg, bg = T.CHAR[t].copy(), T.FG[t].copy(), T.BG[t].copy()
+    if level.surface:                             # the fields through the year
+        stage = e.crop_stage
+        for tile in T.FIELDS:
+            look = CROP_LOOKS.get((tile, stage))
+            here = t == tile
+            if look is not None and here.any():
+                ch[here], fg[here], bg[here] = ord(look[0]), look[1], look[2]
     base_fg, base_bg = fg, bg                     # what's remembered once out of sight
     visible = e.local_visible[view]
     seen = level.explored[view]
@@ -371,14 +379,39 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
     out["ch"] = ch
     out["fg"] = np.clip(fg, 0, 255).astype(np.uint8)
     out["bg"] = np.clip(bg, 0, 255).astype(np.uint8)
+    draw_actors(console, e, ox, oy, shown if not level.underground else None)
     p = e.player
     console.print(e.lx - ox, e.ly - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
+
+
+def draw_actors(console, e: Engine, ox: int, oy: int, canopy_shown) -> None:
+    """People and animals you can see, dimmed by the dark but brighter by firelight. Anyone under
+    the treetops (seen from above) is hidden by the leaves."""
+    level = e.level
+    strength, _ = firelight(level)
+    for a in level.actors:
+        if not (level.in_bounds(a.x, a.y) and e.local_visible[a.x, a.y]):
+            continue
+        sx, sy = a.x - ox, a.y - oy
+        if not (0 <= sx < console.width and 0 <= sy < console.height):
+            continue
+        if canopy_shown is not None:
+            vx, vy = a.x - max(ox, 0), a.y - max(oy, 0)
+            if 0 <= vx < canopy_shown.shape[0] and 0 <= vy < canopy_shown.shape[1] and canopy_shown[vx, vy]:
+                continue
+        light = 1.0 if level.underground else (max(0.5, e.now.light * 0.8) if T.ROOF[level.tiles[a.x, a.y]]
+                                               else e.now.light)
+        bright = min(1.0, max(0.4, light, float(strength[a.x, a.y]) * 1.2))
+        console.rgb["ch"][sx, sy] = ord(a.char)
+        console.rgb["fg"][sx, sy] = tuple(int(c * bright) for c in a.colour)
 
 
 def draw(console: tcod.console.Console, e: Engine, seconds: float | None = None) -> None:
     """Draws everything: the map, then the panels over it. `seconds` is the wall clock, for what
     moves on its own: water and fire."""
     seconds = time.monotonic() if seconds is None else seconds
+    e.panels.width, e.panels.height = console.width, console.height    # however big the screen is now
+    e.menu.cols, e.menu.rows = console.width, console.height
     console.clear()
     if e.level is None:
         draw_map(console, e, seconds)
@@ -389,5 +422,5 @@ def draw(console: tcod.console.Console, e: Engine, seconds: float | None = None)
     draw_hud(console, e, e.describe(*cell) if cell else [], seconds)
     if not e.player.alive:
         text = f" You {e.player.cause}. Esc quits. "
-        console.print(max(0, (MAP_W - len(text)) // 2), MAP_H // 2 - 3, text, fg=(255, 255, 255), bg=(120, 20, 20))
+        console.print(max(0, (console.width - len(text)) // 2), console.height // 2 - 3, text, fg=(255, 255, 255), bg=(120, 20, 20))
     draw_menu(console, e)

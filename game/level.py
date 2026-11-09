@@ -15,6 +15,33 @@ from . import tiles as T
 
 
 @dataclass
+class Building:
+    kind: str                  # "house", "inn", "bakery", "butcher", "shed", "ruin"
+    name: str
+    x0: int
+    y0: int
+    w: int
+    h: int
+    door: tuple
+
+    def contains(self, x: int, y: int) -> bool:
+        return self.x0 <= x < self.x0 + self.w and self.y0 <= y < self.y0 + self.h
+
+    def floor(self, tiles: np.ndarray) -> list[tuple[int, int]]:
+        """The tiles inside you can stand on."""
+        return [(x, y) for x in range(self.x0 + 1, self.x0 + self.w - 1)
+                for y in range(self.y0 + 1, self.y0 + self.h - 1) if T.WALK[tiles[x, y]]]
+
+
+@dataclass
+class Place:
+    kind: str                  # "field", "pasture", "pier", "shore", "camp", "green"
+    name: str
+    tiles: list                # where someone working or grazing here can be
+    animal: str = ""           # what grazes a pasture
+
+
+@dataclass
 class Level:
     key: tuple
     name: str
@@ -27,6 +54,11 @@ class Level:
     canopy: np.ndarray | None = None                   # the layer above: leaves over each tile (trees.py)
     boughs: np.ndarray | None = None                   # branch glyphs, shown when the leaves are down
     fire: tuple | None = field(default=None, repr=False)   # firelight, worked out when first drawn (light.py)
+    buildings: list = field(default_factory=list)      # Building: houses, shops, the inn
+    places: list = field(default_factory=list)         # Place: fields, pastures, the pier, a lumber camp
+    actors: list = field(default_factory=list)         # people and animals (people.py)
+    sim_minutes: float | None = None                   # the clock when the actors were last moved
+    crop: int | None = None                            # the grain grown here, if any
 
     def __post_init__(self):
         if self.explored is None:
@@ -64,6 +96,9 @@ class Level:
             if key == from_key:
                 return pos
         return None
+
+    def building_at(self, x: int, y: int):
+        return next((b for b in self.buildings if b.contains(x, y)), None)
 
     def nearest_walkable(self, x: float, y: float) -> tuple[int, int]:
         """The walkable tile closest to (x, y), counting a row as two columns wide on screen."""

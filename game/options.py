@@ -3,12 +3,17 @@
 Esc opens the pause menu (Resume, Options, Quit). The options screen sets:
 
 - Display: windowed or fullscreen (Alt+Enter or F11 toggles it any time).
-- Resolution: the 4:3 size the game is drawn at. Windowed, it's the size of the window;
-  fullscreen, the game is drawn at this size and scaled up to fill the screen, with black
-  bars at the sides.
 - Font: the classic Terminal bitmap font, or a TrueType font drawn at any size.
-- Font size: the size of one tile. "Auto" picks the tile that fills the resolution exactly,
-  pixel for pixel, which is the sharpest. Anything else is drawn at that size and scaled.
+- Font size: the size of one tile, which sets the size the game is drawn at: 120 x 45 tiles,
+  so 8x16 draws a 960x720 picture. "Auto" picks the biggest that fits your screen (Terminal
+  keeps its own 10x20 whenever that fits).
+- Scale: how many times bigger that picture is shown. Always a whole number, every pixel
+  repeated, so small fonts stay pixel-sharp rather than smeared. "Auto" is the biggest that
+  fits the screen (or the window, if you resize it). Only a font too big for the screen at 1x
+  is shrunk, and that is smoothed.
+
+Windowed, the window takes the size of the picture times the scale. Fullscreen, the picture is
+centred on the screen with black around it.
 
 Changes apply at once and are saved, to %APPDATA%/newrogue/settings.json (or ~/.newrogue).
 This module is only the state; game/display.py does the window and game/hud.py draws the menu.
@@ -30,9 +35,10 @@ FONTS = {   # name: (file, bitmap?) - bitmap fonts come in fixed sizes and are s
     "Lucida Console": ("lucon.ttf", False),
     "Courier New": ("cour.ttf", False),
 }
-RESOLUTIONS = [(800, 600), (960, 720), (1024, 768), (1200, 900), (1280, 960), (1440, 1080),
-               (1600, 1200), (1920, 1440), (2048, 1536)]
-FONT_SIZES = ["Auto", (8, 16), (10, 20), (12, 24), (14, 28), (16, 32), (20, 40)]   # all 1:2, so 4:3
+FONT_SIZES = ["Auto", (6, 12), (8, 16), (10, 20), (12, 24), (14, 28), (16, 32), (20, 40)]   # all 1:2: 4:3
+SCALES = ["Auto", 1, 2, 3, 4]
+NATIVE = {"Terminal": (10, 20)}     # bitmap fonts' own size: crispest of all
+SCREEN_GUESS = (1920, 1040)         # until the window says how big the screen really is
 DISPLAYS = ["Windowed", "Fullscreen"]
 
 
@@ -50,25 +56,47 @@ def available_fonts() -> list[str]:
     return [name for name in FONTS if os.path.exists(font_path(name))] or ["Terminal"]
 
 
+def fits(frame: tuple[int, int], area: tuple[int, int]) -> int:
+    """The biggest whole-number scale at which `frame` fits in `area` (0 if not even 1x)."""
+    return min(area[0] // frame[0], area[1] // frame[1])
+
+
 @dataclass
 class Settings:
     fullscreen: bool = False
-    resolution: tuple = (1200, 900)
     font: str = "Terminal"
     font_size: object = "Auto"        # "Auto" or (width, height)
+    scale: object = "Auto"            # "Auto" or a whole number
 
-    def cell(self) -> tuple[int, int]:
-        """The size of one tile in pixels: the chosen size, or for Auto the biggest 1:2 tile
-        that fits the resolution."""
+    def cell(self, area: tuple[int, int] = SCREEN_GUESS) -> tuple[int, int]:
+        """The size of one tile in pixels: the chosen size, or for Auto the font's own size if
+        it has one that fits, else the biggest that fits `area` (the screen) at 1x."""
         if self.font_size != "Auto":
             return tuple(self.font_size)
-        w = max(4, min(self.resolution[0] // SCREEN_W, self.resolution[1] // (2 * SCREEN_H)))
-        return w, 2 * w
+        native = NATIVE.get(self.font)
+        if native and fits(frame_of(native), area) >= 1:
+            return native
+        sizes = [s for s in FONT_SIZES[1:] if fits(frame_of(s), area) >= 1]
+        return sizes[-1] if sizes else FONT_SIZES[1]
 
-    def frame(self) -> tuple[int, int]:
-        """The size the screen is drawn at before it's scaled to the resolution."""
-        w, h = self.cell()
-        return SCREEN_W * w, SCREEN_H * h
+    def frame(self, area: tuple[int, int] = SCREEN_GUESS) -> tuple[int, int]:
+        """The size the game is drawn at, before it's scaled."""
+        return frame_of(self.cell(area))
+
+    def factor(self, area: tuple[int, int]) -> int:
+        """The whole-number scale to show the picture at in `area`; 0 if it doesn't fit even at
+        1x (and has to be shrunk)."""
+        best = fits(self.frame(area), area)
+        return best if self.scale == "Auto" else min(int(self.scale), best)
+
+    def window_size(self, area: tuple[int, int]) -> tuple[int, int]:
+        """The window for this picture in `area`: the picture times the scale, or shrunk to fit."""
+        fw, fh = self.frame(area)
+        k = self.factor(area)
+        if k >= 1:
+            return fw * k, fh * k
+        shrink = min(area[0] / fw, area[1] / fh)
+        return int(fw * shrink), int(fh * shrink)
 
     def save(self, path: str | None = None) -> None:
         path = path or settings_path()
@@ -84,13 +112,13 @@ class Settings:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             s = cls(fullscreen=bool(data.get("fullscreen", False)),
-                    resolution=tuple(data.get("resolution", (1200, 900))),
                     font=data.get("font", "Terminal"),
-                    font_size=data.get("font_size", "Auto"))
-        except (OSError, ValueError, TypeError):
+                    font_size=data.get("font_size", "Auto"),
+                    scale=data.get("scale", "Auto"))
+        except (OSError, ValueError, TypeError, AttributeError):
             return cls()
-        if s.resolution not in RESOLUTIONS:
-            s.resolution = (1200, 900)
+        if s.scale not in SCALES:
+            s.scale = "Auto"
         if isinstance(s.font_size, list):
             s.font_size = tuple(s.font_size)
         if s.font_size not in FONT_SIZES:
@@ -100,6 +128,10 @@ class Settings:
         return s
 
 
+def frame_of(cell: tuple[int, int]) -> tuple[int, int]:
+    return SCREEN_W * cell[0], SCREEN_H * cell[1]
+
+
 def size_text(size) -> str:
     return "Auto" if size == "Auto" else f"{size[0]}x{size[1]}"
 
@@ -107,19 +139,20 @@ def size_text(size) -> str:
 # ----------------------------------------------------------------- the menus
 
 PAUSE_ITEMS = ["Resume", "Options", "Quit"]
-OPTION_ROWS = ["Display", "Resolution", "Font", "Font size", "Back"]
+OPTION_ROWS = ["Display", "Font", "Font size", "Scale", "Back"]
 BOX_W = 46
 VALUE_X = 16                       # where a row's ◄ value ► starts, from the box's left edge
 
 
-def box(rows: int) -> tuple[int, int, int, int]:
-    """(x, y, width, height) of a menu box with this many rows, in the middle of the screen."""
+def box(rows: int, width: int = SCREEN_W, height: int = SCREEN_H) -> tuple[int, int, int, int]:
+    """(x, y, width, height) of a menu box with this many rows, in the middle of a screen this
+    many tiles across."""
     h = rows * 2 + 5
-    return (SCREEN_W - BOX_W) // 2, (SCREEN_H - h) // 2, BOX_W, h
+    return (width - BOX_W) // 2, (height - h) // 2, BOX_W, h
 
 
-def row_y(rows: int, i: int) -> int:
-    return box(rows)[1] + 3 + 2 * i
+def row_y(rows: int, i: int, width: int = SCREEN_W, height: int = SCREEN_H) -> int:
+    return box(rows, width, height)[1] + 3 + 2 * i
 
 
 class Menu:
@@ -130,6 +163,9 @@ class Menu:
         self.screen: str | None = None
         self.cursor = 0
         self.changed = False             # the display needs redoing (main.py picks this up)
+        self.area = SCREEN_GUESS         # the screen space there is (game/display.py keeps it up to date)
+        self.cols, self.rows = SCREEN_W, SCREEN_H   # the screen in tiles, as it's drawn
+        self.shown = None                # (scale, tiles across, tiles down) as last shown, from main.py
 
     @property
     def open(self) -> bool:
@@ -145,18 +181,39 @@ class Menu:
         s = self.settings
         if row == "Display":
             return DISPLAYS[s.fullscreen]
-        if row == "Resolution":
-            return f"{s.resolution[0]} x {s.resolution[1]}"
         if row == "Font":
             return s.font
         if row == "Font size":
+            cell = s.cell(self.area)
             text = size_text(s.font_size)
             if s.font_size == "Auto":
-                text += f" ({size_text(s.cell())})"
-            if s.font == "Terminal" and s.cell() == (10, 20):
+                text += f" ({size_text(cell)})"
+            if NATIVE.get(s.font) == cell:
                 text += " native"
+            elif fits(s.frame(self.area), self.area) < 1:
+                text += " too big"
             return text
+        if row == "Scale":
+            k = s.factor(self.area)
+            shown = f"{k}x" if k >= 1 else "shrunk"
+            if s.scale == "Auto":
+                return f"Auto ({shown})"
+            return f"{s.scale}x" + ("" if k == s.scale else f" ({shown}: fits)")
         return ""
+
+    def note(self) -> str:
+        """What the settings come to, under the options box."""
+        s = self.settings
+        cw, ch = s.cell(self.area)
+        if self.shown is not None:
+            k, cols, rows = self.shown
+            if k >= 1:
+                return f"{cols}x{rows} tiles of {cw}x{ch}, shown {k}x, pixel-sharp"
+            return f"{cols}x{rows} tiles of {cw}x{ch}: too big, shrunk (smoothed)"
+        k = s.factor(self.area)
+        if k >= 1:
+            return f"Tiles of {cw}x{ch}, shown {k}x, pixel-sharp"
+        return f"Tiles of {cw}x{ch}: too big for the screen, shrunk (smoothed)"
 
     def change(self, row: str, step: int) -> None:
         """Steps a setting to its next (or previous) choice."""
@@ -168,8 +225,8 @@ class Menu:
 
         if row == "Display":
             s.fullscreen = not s.fullscreen
-        elif row == "Resolution":
-            s.resolution = turn(RESOLUTIONS, s.resolution)
+        elif row == "Scale":
+            s.scale = turn(SCALES, s.scale)
         elif row == "Font":
             s.font = turn(available_fonts(), s.font)
         elif row == "Font size":
@@ -223,9 +280,9 @@ class Menu:
 
     def row_at(self, sx: int, sy: int) -> int | None:
         rows = len(self.items())
-        x, _, w, _ = box(rows)
+        x, _, w, _ = box(rows, self.cols, self.rows)
         for i in range(rows):
-            if row_y(rows, i) == sy and x < sx < x + w - 1:
+            if row_y(rows, i, self.cols, self.rows) == sy and x < sx < x + w - 1:
                 return i
         return None
 
@@ -241,14 +298,14 @@ class Menu:
             return None
         self.cursor = i
         item = self.items()[i]
-        if self.screen == "options" and item in ("Display", "Resolution", "Font", "Font size"):
-            left, right = value_span(len(self.items()))
+        if self.screen == "options" and item in ("Display", "Font", "Font size", "Scale"):
+            left, right = value_span(len(self.items()), self.cols, self.rows)
             self.change(item, -1 if left <= sx < (left + right) // 2 else 1)
             return None
         return self.activate()
 
 
-def value_span(rows: int) -> tuple[int, int]:
+def value_span(rows: int, width: int = SCREEN_W, height: int = SCREEN_H) -> tuple[int, int]:
     """The columns of an options row's "◄ value ►": the ◄ is at the first, the ► at the last."""
-    x, _, w, _ = box(rows)
+    x, _, w, _ = box(rows, width, height)
     return x + VALUE_X, x + w - 3
