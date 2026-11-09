@@ -148,7 +148,7 @@ class LocalTerrainTests(unittest.TestCase):
         def share(biome, wanted):
             x, y = (int(v) for v in np.argwhere(w.biome == biome)[len(np.argwhere(w.biome == biome)) // 2])
             return np.isin(generate_region(w, x, y).tiles, wanted).mean()
-        self.assertGreater(share(B.FOREST, [T.TREE]), 0.15)
+        self.assertGreater(share(B.FOREST, [T.TREE]), 0.05)
         self.assertGreater(share(B.DESERT, [T.SAND]), 0.4)
         self.assertGreater(share(B.DEEP_OCEAN, [T.DEEP_WATER]), 0.5)
 

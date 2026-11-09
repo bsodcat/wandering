@@ -156,14 +156,18 @@ class TimeTests(unittest.TestCase):
 
 
 class KeyTests(unittest.TestCase):
-    def test_escape_quits(self):
-        self.assertFalse(engine().handle_key(KeySym.ESCAPE))
+    def test_escape_opens_the_menu_and_quit_quits(self):
+        e = engine()
+        self.assertTrue(e.handle_key(KeySym.ESCAPE))
+        self.assertEqual(e.menu.screen, "pause")
+        e.handle_key(KeySym.UP)                      # round to Quit, the last item
+        self.assertFalse(e.handle_key(KeySym.RETURN))
 
-    def test_tab_cycles_overlays_and_m_reveals(self):
+    def test_o_cycles_overlays_and_m_reveals(self):
         e = engine()
         for i in range(len(OVERLAYS)):
             self.assertEqual(e.overlay, i)
-            e.handle_key(KeySym.TAB)
+            e.handle_key(KeySym.O)
         self.assertEqual(e.overlay, 0)
         e.handle_key(KeySym.M)
         self.assertTrue(e.reveal)
@@ -189,15 +193,19 @@ class RenderTests(unittest.TestCase):
 
     def test_unexplored_is_blank_until_revealed(self):
         e = engine()
+        e.panels.left_open = e.panels.right_open = False    # nothing over the map
+        e.messages.clear()
         console = tcod.console.Console(SCREEN_W, SCREEN_H, order="F")
         draw(console, e)
         cx, cy = camera(e)
-        hidden = ~e.explored[cx: cx + 74, cy: cy + 39]
-        self.assertTrue(hidden.any())
-        self.assertTrue((console.rgb["ch"][:74, :39][hidden] == ord(" ")).all())
+        on_map = [(sx, sy) for sx in range(3, SCREEN_W - 3) for sy in range(1, SCREEN_H)
+                  if e.world.in_bounds(cx + sx, cy + sy)]
+        hidden = [(sx, sy) for sx, sy in on_map if not e.explored[cx + sx, cy + sy]]
+        self.assertTrue(hidden)
+        self.assertTrue(all(console.rgb["ch"][c] == ord(" ") for c in hidden))
         e.reveal = True
         draw(console, e)
-        self.assertFalse((console.rgb["ch"][:74, :39] == ord(" ")).any())
+        self.assertFalse(any(console.rgb["ch"][c] == ord(" ") for c in on_map))
 
 
 if __name__ == "__main__":

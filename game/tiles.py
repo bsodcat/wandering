@@ -33,9 +33,9 @@ TILES = [
     Tile(6, "mud", ",", (120, 100, 70), (55, 45, 32), minutes=1.6, soak=2),
     Tile(7, "snow", ".", (235, 240, 250), (170, 178, 195), minutes=1.1),
     Tile(8, "ice", "·", (210, 230, 250), (140, 170, 200), minutes=1.2),
-    Tile(9, "tree", "♣", (50, 140, 60), (25, 60, 28), walk=False, see=False),
-    Tile(10, "pine", "♠", (60, 115, 85), (22, 50, 35), walk=False, see=False),
-    Tile(11, "jungle tree", "♣", (40, 170, 70), (12, 65, 28), walk=False, see=False),
+    Tile(9, "tree trunk", "O", (150, 105, 60), (45, 34, 22), walk=False),   # leaves: game/trees.py
+    Tile(10, "pine trunk", "O", (125, 85, 55), (38, 30, 22), walk=False),
+    Tile(11, "jungle tree trunk", "O", (160, 135, 85), (40, 36, 22), walk=False),
     Tile(12, "bush", "♠", (95, 150, 70), (40, 72, 30), minutes=1.5),
     Tile(13, "boulder", "•", (160, 155, 145), (70, 68, 62), walk=False),
     Tile(14, "rock", "▲", (140, 132, 125), (85, 80, 75), walk=False, see=False, natural=False),
@@ -67,6 +67,7 @@ TILES = [
     Tile(40, "dry grass", '"', (190, 175, 95), (90, 80, 40), minutes=0.8),
     Tile(41, "reeds", "|", (120, 160, 90), (40, 62, 40), minutes=1.4, soak=3),
     Tile(42, "flagstones", ".", (175, 172, 165), (75, 73, 70), minutes=0.4, natural=False),
+    Tile(43, "torch", "¡", (255, 190, 80), (95, 80, 60), walk=False, see=False, natural=False),   # on a wall
 ]
 assert all(t.id == i for i, t in enumerate(TILES))
 ID = {t.name: t.id for t in TILES}
@@ -74,7 +75,7 @@ ID = {t.name: t.id for t in TILES}
 (DEEP_WATER, WATER, SAND, GRASS, TALL_GRASS, DIRT, MUD, SNOW, ICE, TREE, PINE, JUNGLE_TREE, BUSH,
  BOULDER, ROCK, SCREE, ROAD, STREET, BRIDGE, PATH, WOOD_FLOOR, STONE_FLOOR, WALL, STONE_WALL, DOOR,
  BED, TABLE, HEARTH, WELL, STALL, CROPS, FENCE, DOCK, RUBBLE, CAVE_FLOOR, CAVE_WALL, STAIRS_DOWN,
- STAIRS_UP, BATTLEMENT, BARREL, DRY_GRASS, REEDS, FLAGSTONES) = range(len(TILES))
+ STAIRS_UP, BATTLEMENT, BARREL, DRY_GRASS, REEDS, FLAGSTONES, TORCH) = range(len(TILES))
 
 CHAR = np.array([ord(t.char) for t in TILES], dtype=np.int32)
 FG = np.array([t.fg for t in TILES], dtype=np.float32)

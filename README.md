@@ -24,9 +24,60 @@ python main.py 42       # the same world every time
 | `<` | | stairs up; anywhere else on the surface, back to the overworld |
 | `.` or numpad 5 | wait an hour | wait an hour |
 | `z` | rest 8 hours | rest 8 hours |
-| Tab | cycle overlays: Normal, Elevation, Temperature, Moisture, Weather | |
+| `o` | cycle overlays: Normal, Elevation, Temperature, Moisture, Weather | |
+| Tab | right panel: Info, Map, Log, hidden | same |
+| `c` | show or hide the stats panel | same |
+| PgUp / PgDn, wheel | scroll the Log tab | same |
+| `v` | | switch between the treetops and the ground beneath them |
+| point with the mouse | the sidebar's Look panel describes that region | the Look panel describes that tile |
+| left click | note what's there in the log | note what's there in the log |
+| hold right button | walk there over regions you know | walk there over ground you know |
 | `m` | reveal the whole map (for development) | reveal this level |
-| Esc | quit | quit |
+| Esc | pause menu: Resume, Options, Quit | same |
+| F11 or Alt+Enter | windowed / fullscreen | same |
+
+## The screen
+
+The window is 120x45 tiles of 10x20 pixels: 1200x900, 4:3. If you resize it, it keeps that
+shape. The map fills the whole window, centred on you, and everything else lies on top of it
+(`game/ui.py` lays it out, `game/hud.py` draws it). Hiding a panel just uncovers more map: the
+window and the map under it stay put.
+
+- **Stats** (left; `c` or its `◄` button hides it, the `►` tab in the corner brings it back):
+  bars for health, stamina and wetness, a warmth gauge from cold to hot, what the air feels
+  like, clothing, shelter, sight, and a list of your conditions. New stats are a line in
+  `hud.BARS`.
+- **Right panel**, three tabs (click one, or cycle with Tab, which also hides it; its `►`
+  button hides it too):
+  - Info: the date and time, where you are, the weather, what's under the pointer (Look),
+    and the keys.
+  - Map: a minimap of the world as far as you've explored it (towns marked, you blinking),
+    and under it either the land around you or the whole of the local map you're on.
+  - Log: every message, scrollable with PgUp/PgDn, Home/End or the mouse wheel.
+- **Recent messages** run along the bottom between the panels, over a darkened strip of map
+  (not while the Log tab is open).
+
+Stamina goes down as you walk, faster on slow ground like bushes or wading, and slower on
+the overworld's long steady travel. It comes back while you wait or rest. Below 15 you're
+told you're exhausted. It doesn't hold you back yet.
+
+## Options
+
+Esc opens the pause menu; Options sets these (arrow keys or click the `◄ ►`), and they apply
+at once and are saved to `%APPDATA%/newrogue/settings.json`:
+
+| Setting | Choices |
+| --- | --- |
+| Display | Windowed, Fullscreen (also F11 or Alt+Enter) |
+| Resolution | 800x600 to 2048x1536, all 4:3. Windowed, it's the window's size; fullscreen, the game is drawn at it and scaled to fill the screen, with black bars at the sides |
+| Font | Terminal (the Windows bitmap font), Consolas, Lucida Console, Courier New |
+| Font size | Auto, or 8x16 to 20x40. Auto picks the tile that fills the resolution exactly (sharpest); other sizes are drawn at that size and scaled |
+
+`game/display.py` does the window: it draws the 120x45 screen with the font into a frame,
+scales the frame to the resolution, and lets SDL fit that to the window or monitor. Mouse
+positions go back through the same scaling. TrueType fonts are measured and redrawn so their
+letters fill the tiles (libtcod draws Consolas at half size), and block and line characters
+are drawn by hand so bars and the minimap join up whatever the font.
 
 ## Test
 
@@ -96,13 +147,58 @@ there and kept with what you've explored.
   borders wander instead of following the region grid.
 - Each biome has a ground tile and layers of cover in clusters: trees with clearings in a
   forest, copses on grassland, reeds and pools in a swamp, cliffs along ridges in mountains.
+- Trees come in two layers, as in Dwarf Fortress (`game/trees.py`). The trunk (`O`) stands on
+  the ground: you can't walk through it, but you can see past it. No two trunks touch. The
+  crown spreads over the tiles around it on the layer above: broadleaf crowns 2 columns out,
+  pines narrower, jungle trees wider. You walk under the leaves. They shade the ground, keep
+  off the rain and lying snow, and add shelter.
+- Broadleaf trees follow the seasons: buds in spring, green in summer, red and gold in autumn,
+  bare boughs in winter (branch glyphs pointing back to the trunk). Pines, jungle trees and
+  trees in the tropics stay green.
 - Coasts and lakes are shallow near the shore and deep further out.
 - Rivers and roads run between fixed "nodes", one per region, with a meander that depends
   only on the two ends, so both sides of a border draw the same line. Wide rivers have a deep
   channel you can't wade; roads over water become bridges. A settlement's node is its middle,
   so its roads lead into the square.
 - It's all generated with a 6-tile margin and then cut down, so anything that looks at its
-  neighbours (like shallow water by the shore) matches across borders.
+  neighbours (like shallow water by the shore) matches across borders, and leaves reach
+  across from trees in the next region.
+
+Trees never block a way in. After the structures are built, every trunk within about 3
+columns of a door, stairs, a well, a gate or the step outside a door is felled. No leaves hang
+over buildings, streets, roads, paths, docks or bridges, or right over an entrance.
+
+**Fire and water.**
+- Every house, inn and shed in a settlement has a torch (`¡`) on the wall beside its door, and
+  towers have one too. Ruins have none.
+- Hearths and torches light what they can see, fading with distance (`game/light.py`).
+  Hearths light the room they're in; torches light the ground outside. Each fire flickers to
+  its own rhythm, and everything it lights flickers with it. Hearth flames dance between `☼`
+  and `*`.
+- Firelight matters most in the dark: at night you can see firelit places beyond your
+  lantern, so a town shows its lights from across the map.
+- Water moves. Ripples run downstream along a region's river, the sea and lakes swell more
+  slowly, and in sunshine the water glints. On the overworld, rivers shimmer the way they
+  flow and the sea rolls.
+- The window redraws 15 times a second for this, whether or not you press anything.
+
+**The mouse.** Point at anything on the map and the Look panel in the sidebar says what you
+know about it.
+- On a local map: the tile, where stairs lead, the tree overhead and its leaves, whether it
+  blocks the way, gets you wet or is slow going, how many steps away it is, and whether you
+  can see it now or only remember it.
+- On the overworld: the site, the biome, rivers and roads, the height, the weather there if
+  you can see it, and about how long it would take to get there.
+
+Hold the right button to walk to the place you pressed on, along the quickest way over ground
+you've seen. Routes go round water when there's a dry way. Moving the mouse while you hold
+the button steers the walk. The walk stops when you let go, press a key, arrive, cross into
+another map, or when something needs your attention: a change in the weather, nightfall, or a
+warning about your body.
+
+From above, the treetops hide what's under them, except in a small circle around you, where
+you see the trunks and the shaded ground. `v` shows the ground everywhere, with the shade of
+the leaves.
 
 **Structures** (`game/structures.py`) grow out from the middle of a site and keep 4 tiles from
 the edges:
@@ -125,7 +221,7 @@ slower in the dark and through lying snow. Snow lies on the ground when the seas
 temperature in that region is below freezing. Under a roof you're indoors: out of the weather,
 at the level's indoor temperature (warm in settlements, cool in towers). Underground you're
 out of the weather but it's cold (caves are 10 °C and colder further down), and only your
-lantern lights the way. Trees and walls around you give some shelter. How far you see outside
+lantern lights the way. Trees and walls around you give some shelter, and more under leaves. How far you see outside
 follows the daylight, fog and rain.
 
 `game/rooms.py` (rooms and corridors) builds the crypts.
@@ -139,11 +235,17 @@ game/biomes.py     biome table: looks, travel time, shelter
 game/localgen.py   region local maps: seamless terrain, rivers, roads
 game/structures.py towns, villages, inns, docks, towers, ruins, caves, and the levels below and above
 game/tiles.py      local tile table: looks, walking, sight, step time, roofs
-game/level.py      a local map and its stairs
+game/trees.py      trunks and crowns, seasons, keeping ways in clear
+game/light.py      firelight from hearths and torches, and how it flickers
+game/level.py      a local map, its stairs and its canopy layer
 game/climate.py    calendar, daylight, weather, temperature
 game/player.py     the body: temperature, wetness, health
 game/engine.py     game state, travel on both maps, stairs, time and keys
-game/render.py     the overworld or local map, overlays, sidebar and log
+game/render.py     the overworld or local map, overlays, water and fire, the mouse pointer
+game/ui.py         the screen layout: which panels are open, what's under a screen cell
+game/hud.py        the panels: stats, Info/Map/Log, recent messages
+game/options.py    settings, the pause menu and options screen
+game/display.py    the window: fonts, resolution, fullscreen, scaling, mouse positions
 game/rooms.py      rooms and corridors (crypts)
 game/fon.py        reads Windows .fon bitmap fonts (the Terminal font), from Togetherogue
 tests/             unittest tests

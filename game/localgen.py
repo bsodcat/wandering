@@ -7,7 +7,8 @@ y * LOCAL_H), so neighbouring regions join without a seam:
   borders wander naturally instead of running in straight lines.
 - Ground and cover: each biome has a ground tile and layers of cover (trees, bushes, rocks,
   reeds) scattered by clustered noise, so forests have clearings and grassland has copses.
-  Mountains get cliffs along ridge lines.
+  Trees are thinned so no two trunks touch, and each spreads a crown of leaves on the layer
+  above (game/trees.py). Mountains get cliffs along ridge lines.
 - Water: oceans and lakes, shallow near the shore and deep further out.
 - Rivers and roads are drawn between region "nodes" (a fixed point in each region), with a
   meander that depends only on the two ends, so both sides of a border draw the same line.
@@ -29,6 +30,7 @@ import tcod
 from . import biomes as B
 from . import structures
 from . import tiles as T
+from . import trees
 from .level import Level
 
 LOCAL_W, LOCAL_H = 96, 48
@@ -42,17 +44,17 @@ RECIPES = {
     B.GLACIER: (T.SNOW, [(T.ICE, 0.35, True), (T.BOULDER, 0.01, False)]),
     B.TUNDRA: (T.DIRT, [(T.SNOW, 0.45, True), (T.DRY_GRASS, 0.2, True), (T.BUSH, 0.04, True),
                         (T.BOULDER, 0.02, False)]),
-    B.TAIGA: (T.GRASS, [(T.PINE, 0.36, True), (T.BUSH, 0.05, False), (T.BOULDER, 0.01, False)]),
+    B.TAIGA: (T.GRASS, [(T.PINE, 0.4, True), (T.BUSH, 0.05, False), (T.BOULDER, 0.01, False)]),
     B.STEPPE: (T.DRY_GRASS, [(T.GRASS, 0.3, True), (T.BUSH, 0.03, False), (T.BOULDER, 0.01, False)]),
     B.GRASSLAND: (T.GRASS, [(T.TALL_GRASS, 0.35, True), (T.TREE, 0.04, True), (T.BUSH, 0.04, True),
                             (T.BOULDER, 0.005, False)]),
     B.SHRUBLAND: (T.DIRT, [(T.DRY_GRASS, 0.4, True), (T.BUSH, 0.22, True), (T.TREE, 0.02, False),
                            (T.BOULDER, 0.01, False)]),
-    B.FOREST: (T.GRASS, [(T.TALL_GRASS, 0.1, True), (T.TREE, 0.42, True), (T.BUSH, 0.08, True)]),
+    B.FOREST: (T.GRASS, [(T.TALL_GRASS, 0.1, True), (T.BUSH, 0.08, True), (T.TREE, 0.42, True)]),
     B.SWAMP: (T.MUD, [(T.WATER, 0.3, True), (T.REEDS, 0.25, True), (T.TREE, 0.12, True)]),
     B.DESERT: (T.SAND, [(T.DIRT, 0.1, True), (T.DRY_GRASS, 0.02, False), (T.BOULDER, 0.015, False)]),
     B.SAVANNA: (T.DRY_GRASS, [(T.GRASS, 0.25, True), (T.BUSH, 0.05, True), (T.TREE, 0.03, False)]),
-    B.JUNGLE: (T.GRASS, [(T.TALL_GRASS, 0.2, True), (T.JUNGLE_TREE, 0.55, True), (T.BUSH, 0.15, True)]),
+    B.JUNGLE: (T.GRASS, [(T.TALL_GRASS, 0.2, True), (T.BUSH, 0.15, True), (T.JUNGLE_TREE, 0.55, True)]),
     B.HILLS: (T.GRASS, [(T.DIRT, 0.3, True), (T.SCREE, 0.1, True), (T.TREE, 0.06, True),
                         (T.BOULDER, 0.05, True)]),
     B.MOUNTAINS: (T.SCREE, [(T.SNOW, 0.15, True), (T.BOULDER, 0.06, False)]),
@@ -108,12 +110,14 @@ def terrain(world, gx0: int, gy0: int, w: int, h: int) -> tuple[np.ndarray, np.n
     cluster = (n["cluster"][(gx / 18, gy / 9)] + 1) / 2
     detail = n["detail"][(gx / 10, gy / 5)]
     tiles = np.full((w, h), T.GRASS, np.uint8)
+    ground_of = np.full((w, h), T.GRASS, np.uint8)
     for b in np.unique(biome).tolist():
         here = biome == b
         if b in B.WATER:
             continue
         ground, layers = RECIPES.get(b, (T.GRASS, []))
         tiles[here] = ground
+        ground_of[here] = ground
         for salt, (tile, density, clustered) in enumerate(layers, start=10):
             chance = density * (0.15 + 1.7 * cluster) if clustered else density
             tiles[here & (hash01(gx, gy, salt + b * 31) < chance)] = tile
@@ -121,6 +125,7 @@ def terrain(world, gx0: int, gy0: int, w: int, h: int) -> tuple[np.ndarray, np.n
             line, blob = CLIFFS[b]
             ridge = 1 - np.abs(n["ridge"][(gx / 30, gy / 15)])
             tiles[here & ((ridge > line) | (detail > blob))] = T.ROCK
+    trees.thin(tiles, hash01(gx, gy, 7), ground_of)
     water = np.isin(biome, B.WATER)
     near_land = dilate(~water, 3)
     tiles[water] = T.DEEP_WATER
@@ -214,14 +219,21 @@ def region_name(world, x: int, y: int) -> str:
 
 def generate_region(world, x: int, y: int) -> Level:
     gx0, gy0 = x * LOCAL_W - MARGIN, y * LOCAL_H - MARGIN
-    tiles, _ = terrain(world, gx0, gy0, LOCAL_W + 2 * MARGIN, LOCAL_H + 2 * MARGIN)
-    draw_waterways(world, tiles, gx0, gy0)
-    tiles = tiles[MARGIN: MARGIN + LOCAL_W, MARGIN: MARGIN + LOCAL_H].copy()
+    window, _ = terrain(world, gx0, gy0, LOCAL_W + 2 * MARGIN, LOCAL_H + 2 * MARGIN)
+    draw_waterways(world, window, gx0, gy0)
+    inner = (slice(MARGIN, MARGIN + LOCAL_W), slice(MARGIN, MARGIN + LOCAL_H))
     site = world.site_at.get((x, y))
-    level = Level(("region", x, y), region_name(world, x, y), tiles,
+    level = Level(("region", x, y), region_name(world, x, y), window[inner].copy(),
                   indoor_air=19.0 if site is not None and site.settled else 14.0)
     if site is not None:
         structures.build(level, site, random.Random(world.region_seed(x, y)))
+    # Trees keep clear of every way in; then the crowns, from the trunks left standing here and
+    # in the margin, so leaves reach across the border from trees in the next region.
+    trees.clear_entrances(level.tiles, level.exits)
+    window[inner] = level.tiles
+    canopy, boughs = trees.crowns(window)
+    level.canopy, level.boughs = canopy[inner].copy(), boughs[inner].copy()
+    trees.keep_clear(level.canopy, level.boughs, level.tiles, level.exits)
     return level
 
 

@@ -1,32 +1,36 @@
-"""Drawing: the world map or the local map, the sidebar and the message log.
+"""Drawing: the world map or the local map, filling the whole window, centred on you. The
+panels over it (stats, info, minimap, log) are game/hud.py.
 
 The map is coloured a whole view at a time with numpy: biome colours, then rivers, roads and
 sites, then the weather and the daylight on what you can see. Places you've seen but can't see
-now are drawn grey from memory. The overlays (Tab) show the raw fields for tuning the
+now are drawn grey from memory. The overlays (o) show the raw fields for tuning the
 generator: elevation, temperature right now, moisture and weather.
 
 Local maps are drawn the same way, tile by tile: under the open sky they take the region's
 daylight, weather and lying snow; under a roof they're lit as if by lamps; underground only
-your lantern lights them, fading with distance.
+your lantern lights them, fading with distance. Hearths and torches burn with a flickering
+light of their own, and water moves: rivers run downstream and the sea rolls. Treetops are a
+layer above the ground: seen from above they hide what's under them, except right around you, where you see the trunks
+and the shaded ground beneath (v shows the ground everywhere).
 """
 from __future__ import annotations
+
+import time
 
 import numpy as np
 import tcod
 
 from . import biomes as B
 from . import tiles as T
-from .climate import clock_text, date_text, describe_wind, time_of_day
+from . import trees
+from .light import firelight, flame, flicker
 from .engine import OVERLAYS, Engine
-from .player import body_status, feels_like, wet_status
+from .hud import draw_hud, draw_menu
+from .ui import SCREEN_H, SCREEN_W
 from .worldgen import SITE_KINDS
 
-SCREEN_W, SCREEN_H = 100, 45
-MAP_W, MAP_H = 74, 39
-SIDE_X = MAP_W + 2
-LOG_Y = MAP_H + 1
-
-TEXT, DIM, TITLE = (220, 220, 220), (130, 130, 130), (255, 220, 120)
+MAP_W, MAP_H = SCREEN_W, SCREEN_H      # the map is the whole window; the panels lie over it
+CURSOR_BG, ROUTE_BG = np.array((200, 190, 90)), np.array((90, 120, 170))
 RIVER_FG, ROAD_FG, BRIDGE_FG = (90, 150, 235), (185, 150, 95), (200, 160, 100)
 
 
@@ -43,16 +47,115 @@ TEMPERATURE = [(-35, (120, 40, 160)), (-15, (40, 60, 200)), (0, (90, 200, 230)),
 MOISTURE = [(0, (190, 160, 100)), (0.35, (170, 190, 100)), (0.65, (60, 150, 120)), (1, (20, 60, 160))]
 
 
+def follow(px: int, py: int) -> tuple[int, int]:
+    """The map cell at the top-left of the screen, so that (px, py) is in the middle. It keeps
+    you in the middle even by the edge of the map (past it is blank), so the panels at the
+    sides never cover you."""
+    return px - MAP_W // 2, py - MAP_H // 2
+
+
 def camera(e: Engine) -> tuple[int, int]:
-    w, p = e.world, e.player
-    return (int(np.clip(p.x - MAP_W // 2, 0, max(0, w.width - MAP_W))),
-            int(np.clip(p.y - MAP_H // 2, 0, max(0, w.height - MAP_H))))
+    return follow(e.player.x, e.player.y)
 
 
-def follow(px: int, py: int, width: int, height: int) -> tuple[int, int]:
-    """The top-left of a MAP_W x MAP_H view that keeps (px, py) in the middle where it can."""
-    return (int(np.clip(px - MAP_W // 2, 0, max(0, width - MAP_W))),
-            int(np.clip(py - MAP_H // 2, 0, max(0, height - MAP_H))))
+def window(ox: int, oy: int, width: int, height: int):
+    """The part of a width x height map on screen from origin (ox, oy): (the map slices, the
+    screen cell its top-left lands on, its size)."""
+    x0, y0 = max(ox, 0), max(oy, 0)
+    x1, y1 = min(ox + MAP_W, width), min(oy + MAP_H, height)
+    vw, vh = max(0, x1 - x0), max(0, y1 - y0)
+    return (slice(x0, x0 + vw), slice(y0, y0 + vh)), (x0 - ox, y0 - oy), (vw, vh)
+
+
+def view_origin(e: Engine) -> tuple[int, int]:
+    """The map cell at the top-left of the screen."""
+    if e.level is None:
+        return camera(e)
+    return follow(e.lx, e.ly)
+
+
+def map_cell(e: Engine, sx: int, sy: int) -> tuple[int, int] | None:
+    """The map cell under screen cell (sx, sy), or None if that's not over the map."""
+    if not (0 <= sx < MAP_W and 0 <= sy < MAP_H) or e.panels.covers(sx, sy):
+        return None
+    ox, oy = view_origin(e)
+    x, y = ox + sx, oy + sy
+    return (x, y) if e.in_map(x, y) else None
+
+
+def draw_pointer(console: tcod.console.Console, e: Engine) -> None:
+    """The cell under the mouse, and while walking there, the way."""
+    if e.mouse is None:
+        return
+    cell = map_cell(e, *e.mouse)
+    if cell is None:
+        return
+    ox, oy = view_origin(e)
+    rgb = console.rgb
+    if e.autopath and e.goal is not None:
+        for x, y in e.route(*e.goal):
+            sx, sy = x - ox, y - oy
+            if 0 <= sx < MAP_W and 0 <= sy < MAP_H:
+                rgb["bg"][sx, sy] = (rgb["bg"][sx, sy] * 0.4 + ROUTE_BG * 0.6).astype(np.uint8)
+    sx, sy = e.mouse
+    rgb["bg"][sx, sy] = (rgb["bg"][sx, sy] * 0.3 + CURSOR_BG * 0.7).astype(np.uint8)
+    rgb["fg"][sx, sy] = (20, 20, 20)
+
+
+# ----------------------------------------------------------------- moving water
+
+WATER_TILES = [T.WATER, T.DEEP_WATER]
+SEA_SWELL = (0.45, 0.9)          # the way waves roll where there's no current
+RIVER_SPEED, SEA_SPEED = 3.2, 1.4
+GLINT = (235, 245, 255)
+
+
+def unit(dx: float, dy: float) -> tuple[float, float]:
+    n = float(np.hypot(dx, dy)) or 1.0
+    return dx / n, dy / n
+
+
+def waves(gx, gy, dx, dy, speed, seconds) -> np.ndarray:
+    """-1..1: the swell over each cell, travelling along (dx, dy)."""
+    phase = (gx * dx + 2 * gy * dy) * 0.55 + speckle(gx, gy, 0, 1) * 1.2
+    return np.sin(phase - seconds * speed)
+
+
+def animate_water(ch, fg, bg, wet, w, gx, gy, seconds: float, glints: bool, deep=None) -> None:
+    """Ripples on the water: crests that move, colours that swell, and the odd glint of sun."""
+    if not wet.any():
+        return
+    deep = np.zeros_like(wet) if deep is None else deep & wet
+    shallow = wet & ~deep
+    ch[shallow] = np.where(w[shallow] > 0.55, ord("≈"), ord("~"))
+    ch[deep] = np.where(w[deep] > 0.6, ord("~"), ord("≈"))
+    fg[wet] = fg[wet] * (0.8 + 0.3 * w[wet])[:, None]
+    bg[wet] = bg[wet] * (0.93 + 0.1 * w[wet])[:, None]
+    if glints:
+        glint = wet & (w > 0.3) & (speckle(gx, gy, int(seconds * 6), 1) < 0.01)
+        ch[glint], fg[glint] = ord("·"), GLINT
+
+
+# ----------------------------------------------------------------- firelight
+
+FIRE_FG, FIRE_BG = np.array((70, 35, 0)), np.array((80, 35, 5))
+
+
+def burn(ch, fg, bg, t, visible, strength, phase, dark, base_fg, base_bg, seconds: float) -> None:
+    """Firelight on what the fires light, and the flames themselves."""
+    lit = (strength > 0) & visible
+    if not lit.any():
+        return
+    amount = (strength * flicker(phase, seconds) * dark * lit)[..., None]
+    fg += base_fg * amount * 0.9 + amount * FIRE_FG
+    bg += base_bg * amount * 0.8 + amount * FIRE_BG
+    flames = np.isin(t, [T.HEARTH, T.TORCH]) & visible
+    if flames.any():
+        step, colours = flame(phase, seconds)
+        fg[flames] = colours[flames]
+        bg[flames] = T.BG[t][flames] * (0.8 + 0.4 * flicker(phase, seconds)[flames])[:, None]
+        hearth = flames & (t == T.HEARTH)
+        ch[hearth] = np.where(step[hearth] % 3 == 0, ord("*"), ord("☼"))
 
 
 def speckle(xs: np.ndarray, ys: np.ndarray, minutes: float, period: int = 60) -> np.ndarray:
@@ -62,11 +165,11 @@ def speckle(xs: np.ndarray, ys: np.ndarray, minutes: float, period: int = 60) ->
     return (h & 0xFFFF) / 0xFFFF
 
 
-def draw_map(console: tcod.console.Console, e: Engine) -> None:
+def draw_map(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -> None:
     w = e.world
-    cx, cy = camera(e)
-    vw, vh = min(MAP_W, w.width), min(MAP_H, w.height)
-    view = (slice(cx, cx + vw), slice(cy, cy + vh))
+    ox, oy = camera(e)
+    view, (sx0, sy0), (vw, vh) = window(ox, oy, w.width, w.height)
+    cx, cy = view[0].start, view[1].start
     biome = w.biome[view]
     ch = B.CHAR[biome].copy()
     fg = B.FG[biome].copy()
@@ -97,6 +200,20 @@ def draw_map(console: tcod.console.Console, e: Engine) -> None:
         rain = falling & ~snow
         ch[rain], fg[rain] = ord(","), (120, 165, 235)
         ch[snow], fg[snow] = ord("*"), (240, 240, 255)
+        # moving water: rivers run the way they flow, the sea swells
+        sea = np.isin(biome, B.WATER) & visible & ~falling
+        running = river & visible & ~falling & ~bridge
+        gx, gy = xs + np.zeros_like(biome), ys + np.zeros_like(biome)
+        swell = waves(gx, gy, *unit(*SEA_SWELL), SEA_SPEED, seconds)
+        fx, fy = w.flow_dx[view].astype(float), w.flow_dy[view].astype(float)
+        norm = np.hypot(fx, fy) + 1e-9
+        flow = waves(gx, gy, fx / norm, fy / norm, RIVER_SPEED, seconds)
+        fg[sea] = fg[sea] * (0.85 + 0.25 * swell[sea])[:, None]
+        bg[sea] = bg[sea] * (0.93 + 0.1 * swell[sea])[:, None]
+        crest = sea & (swell > 0.75)
+        ch[crest] = ord("~")
+        fg[running] = fg[running] * (0.8 + 0.3 * flow[running])[:, None]
+        ch[running & (flow > 0.6)] = ord("≈")
         fog = f["fog"][..., None] * 0.65
         fg = fg * (1 - fog) + 170 * fog
         bg = bg * (1 - fog) + 120 * fog
@@ -130,43 +247,100 @@ def draw_map(console: tcod.console.Console, e: Engine) -> None:
             bg[fogged] = (200, 200, 200)
         fg = bg * 0.45 + 70
 
-    out = console.rgb[:vw, :vh]
+    out = console.rgb[sx0: sx0 + vw, sy0: sy0 + vh]
     out["ch"] = ch
     out["fg"] = np.clip(fg, 0, 255).astype(np.uint8)
     out["bg"] = np.clip(bg, 0, 255).astype(np.uint8)
     p = e.player
-    console.print(p.x - cx, p.y - cy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
+    console.print(p.x - ox, p.y - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
 
 
 SNOW_FG, SNOW_BG = np.array((235, 240, 250)), np.array((170, 178, 195))
 LANTERN_GLOW = 5   # tiles your lantern brightens on a dark night outdoors
+CUTAWAY = 4.3      # how far around you (in columns) you see under the treetops
+
+# Leaves seen from above: (glyph, second glyph, how often the first, fg, bg)
+LEAVES = {
+    (trees.BROADLEAF, "green"): ("♣", "♣", 1.0, [(60, 150, 60), (75, 160, 65), (50, 135, 55)], (22, 58, 26)),
+    (trees.BROADLEAF, "budding"): ("♣", "·", 0.7, [(150, 205, 95), (120, 190, 80)], (35, 64, 30)),
+    (trees.BROADLEAF, "autumn"): ("♣", "♣", 1.0, [(205, 120, 45), (215, 175, 55), (170, 65, 35)], (62, 42, 22)),
+    (trees.PINE, None): ("♠", "♠", 1.0, [(45, 115, 75), (55, 125, 80)], (14, 42, 28)),
+    (trees.JUNGLE, None): ("♣", "♠", 0.6, [(45, 175, 75), (70, 190, 60)], (10, 62, 26)),
+}
+BARE_FG = np.array((125, 95, 65))
 
 
-def draw_local(console: tcod.console.Console, e: Engine) -> None:
+def leaf_layer(canopy, boughs, look: str, gx, gy):
+    """Glyphs and colours for the treetops, and which tiles you can see the ground through
+    (bare boughs in winter)."""
+    ch = np.zeros(canopy.shape, np.int32)
+    fg = np.zeros(canopy.shape + (3,))
+    bg = np.zeros(canopy.shape + (3,))
+    r = speckle(gx, gy, 0, 1)
+    for (kind, when), (first, second, share, colours, back) in LEAVES.items():
+        here = canopy == kind
+        if when is not None:
+            if look != when:
+                continue
+        if not here.any():
+            continue
+        ch[here] = np.where(r[here] < share, ord(first), ord(second))
+        pick = np.minimum((r[here] * 7919 % 1 * len(colours)).astype(int), len(colours) - 1)
+        fg[here] = np.array(colours)[pick]
+        bg[here] = back
+    bare = (canopy == trees.BROADLEAF) & (look == "bare")
+    ch[bare], fg[bare] = boughs[bare], BARE_FG
+    return ch, fg, bg, bare
+
+
+def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -> None:
     level = e.level
-    cx, cy = follow(e.lx, e.ly, level.width, level.height)
-    vw, vh = min(MAP_W, level.width), min(MAP_H, level.height)
-    view = (slice(cx, cx + vw), slice(cy, cy + vh))
+    ox, oy = follow(e.lx, e.ly)
+    view, (sx0, sy0), (vw, vh) = window(ox, oy, level.width, level.height)
+    cx, cy = view[0].start, view[1].start
     t = level.tiles[view]
     ch, fg, bg = T.CHAR[t].copy(), T.FG[t].copy(), T.BG[t].copy()
+    base_fg, base_bg = fg, bg                     # what's remembered once out of sight
     visible = e.local_visible[view]
     seen = level.explored[view]
     xs = np.arange(cx, cx + vw)[:, None] + np.zeros((1, vh), int)
     ys = np.arange(cy, cy + vh)[None, :] + np.zeros((vw, 1), int)
     dist = np.sqrt((xs - e.lx) ** 2 + (2 * (ys - e.ly)) ** 2)
     c = e.now
+    gx, gy = xs + level.region[0] * 1000, ys + level.region[1] * 1000
+    region = level.region
+    if level.surface and e.world.river[region]:
+        current, speed = unit(float(e.world.flow_dx[region]), float(e.world.flow_dy[region])), RIVER_SPEED
+    else:
+        current, speed = unit(*SEA_SWELL), SEA_SPEED * (0.5 if level.underground else 1.0)
+    wet = np.isin(t, WATER_TILES) & visible
+    animate_water(ch, fg, bg, wet, waves(gx, gy, *current, speed, seconds), gx, gy, seconds,
+                  glints=not level.underground and c.light > 0.45 and c.precip < 0.15, deep=t == T.DEEP_WATER)
     if level.underground:
         light = np.clip(1.15 - dist / (2 * e.sight_radius() + 2), 0.12, 1)[..., None]
         fg, bg = fg * light, bg * light
     else:
         sky = ~T.ROOF[t]
+        canopy = level.canopy[view]
+        leaf_ch, leaf_fg, leaf_bg, bare = leaf_layer(canopy, level.boughs[view], e.foliage, gx, gy)
+        leaves = canopy > 0
+        dense = leaves & ~bare                     # keeps the rain and snow off the ground
+        shown = leaves & (dist > CUTAWAY) if e.treetops else np.zeros_like(leaves)
         if e.snowy:
-            snowed = sky & T.SNOWS_ON[t]
+            snowed = sky & T.SNOWS_ON[t] & ~dense & ~shown
             fg[snowed] = fg[snowed] * 0.2 + SNOW_FG * 0.8
             bg[snowed] = SNOW_BG
-        gx, gy = xs + level.region[0] * 1000, ys + level.region[1] * 1000
+            leaf_fg[leaves] = leaf_fg[leaves] * 0.45 + SNOW_FG * 0.55
+            leaf_bg[dense] = leaf_bg[dense] * 0.6 + SNOW_BG * 0.4
+        shade = leaves & ~shown & ~bare           # the ground in the shadow of the leaves
+        fg[shade], bg[shade] = fg[shade] * 0.75, bg[shade] * 0.6
+        ch[shown], fg[shown] = leaf_ch[shown], leaf_fg[shown]
+        thick = shown & ~bare
+        bg[thick] = leaf_bg[thick]
+        base_fg, base_bg = fg.copy(), bg.copy()
         if c.precip > 0.15:
-            falling = sky & visible & (speckle(gx, gy, e.minutes, 5) < c.precip * 0.3) & T.WALK[t]
+            falling = sky & visible & (speckle(gx, gy, e.minutes, 5) < c.precip * 0.3) & (T.WALK[t] | shown)
+            falling &= ~(dense & ~shown)
             ch[falling] = ord("*") if c.snowing else ord(",")
             fg[falling] = (240, 240, 255) if c.snowing else (120, 165, 235)
         if c.fog > 0:
@@ -181,110 +355,39 @@ def draw_local(console: tcod.console.Console, e: Engine) -> None:
         bg = bg * (0.15 + 0.85 * light) + (1 - light) * np.array((0, 0, 18)) + warm * np.array((25, 8, -5))
         if c.light < 0.4:   # your lantern
             glow = np.clip(1 - dist / (2 * LANTERN_GLOW), 0, 1)[..., None] * (0.4 - c.light)
-            fg, bg = fg + T.FG[t] * glow, bg + T.BG[t] * glow
-    hearth = (t == T.HEARTH) & visible
-    fg[hearth], bg[hearth] = T.FG[T.HEARTH], T.BG[T.HEARTH]
+            fg, bg = fg + base_fg * glow, bg + base_bg * glow
+    strength, phase = firelight(level)
+    if level.underground:
+        dark = 0.6
+    else:   # firelight shows most in the dark; under a roof there's always some to see by
+        dark = np.where(sky, 1 - c.light, max(0.35, 1 - max(0.5, c.light * 0.8)))
+    burn(ch, fg, bg, t, visible, strength[view], phase[view], dark, base_fg, base_bg, seconds)
     memory = seen & ~visible
-    fg[memory] = T.FG[t][memory] * 0.35 + T.FG[t][memory].mean(axis=-1, keepdims=True) * 0.15 + 12
-    bg[memory] = T.BG[t][memory] * 0.18 + 5
+    fg[memory] = base_fg[memory] * 0.35 + base_fg[memory].mean(axis=-1, keepdims=True) * 0.15 + 12
+    bg[memory] = base_bg[memory] * 0.18 + 5
     hidden = ~seen
     ch[hidden], fg[hidden], bg[hidden] = ord(" "), 0, 0
-    out = console.rgb[:vw, :vh]
+    out = console.rgb[sx0: sx0 + vw, sy0: sy0 + vh]
     out["ch"] = ch
     out["fg"] = np.clip(fg, 0, 255).astype(np.uint8)
     out["bg"] = np.clip(bg, 0, 255).astype(np.uint8)
     p = e.player
-    console.print(e.lx - cx, e.ly - cy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
+    console.print(e.lx - ox, e.ly - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
 
 
-def bar(console, x: int, y: int, width: int, value: float, top: float, colour) -> None:
-    filled = int(round(width * max(0.0, min(1.0, value / top))))
-    console.print(x, y, "█" * filled, fg=colour)
-    console.print(x + filled, y, "░" * (width - filled), fg=(60, 60, 60))
-
-
-def draw_sidebar(console: tcod.console.Console, e: Engine) -> None:
-    x, y = SIDE_X, 0
-    p, w, c = e.player, e.world, e.now
-
-    def line(text: str, colour=TEXT) -> None:
-        nonlocal y
-        console.print(x, y, text[: SCREEN_W - x], fg=colour)
-        y += 1
-
-    line(date_text(e.minutes), TITLE)
-    line(f"{clock_text(e.minutes)}  {time_of_day(e.lat, e.minutes)}")
-    y += 1
-    site = e.site
-    if e.level is not None and not e.level.surface:
-        line(e.level.name, TITLE)
-        line("Underground" if e.underground else ("Indoors" if e.indoors else "Out in the open"), DIM)
-        line(e.tile.name.capitalize(), DIM)
-    else:
-        line(site.name if site else e.biome.name, TITLE)
-        if site:
-            line(f"{site.kind.title()}{' (port)' if site.port else ''}, {e.biome.name.lower()}", DIM)
-        extras = [t for t, on in (("river", w.river[p.x, p.y]), ("road", w.road[p.x, p.y])) if on]
-        line(f"Alt {max(0, w.elevation[p.x, p.y]):.0f} m" + (f"  {', '.join(extras)}" if extras else ""), DIM)
-        if e.level is not None:
-            line(e.tile.name.capitalize() + ("  indoors" if e.indoors else ""), DIM)
-    y += 1
-    if e.indoors and e.level is not None:
-        line(f"Air   {e.indoor_air:5.1f}°C")
-        line(f"Outside {c.air:5.1f}°C", DIM)
-        line("Underground" if e.underground else f"Indoors; {c.kind.lower()} outside")
-        line("No wind", DIM)
-    else:
-        felt = feels_like(c.air, c.wind, p.wet, e.shelter)
-        line(f"Air   {c.air:5.1f}°C")
-        line(f"Feels {felt:5.1f}°C", DIM)
-        line(c.kind)
-        line(f"{describe_wind(c.wind)} {c.wind:.0f} km/h", DIM)
-    line(f"Sight {e.sight_radius()}  Shelter {e.shelter:.0%}", DIM)
-    y += 1
-    line(f"Health {p.health:5.1f}")
-    bar(console, x, y, 22, p.health, 100, (200, 60, 60)); y += 1
-    line(f"Body {p.body:4.1f}°C {body_status(p.body)}")
-    line(f"Wet  {p.wet:3.0f}%  {wet_status(p.wet)}")
-    bar(console, x, y, 22, p.wet, 100, (70, 120, 220)); y += 1
-    y += 1
-    if e.level is None:
-        line(f"Overlay: {OVERLAYS[e.overlay]}", DIM)
-        line(f"Map: {'revealed' if e.reveal else 'explored'}", DIM)
-        keys = ("arrows/numpad/wasd go", "> Enter go into region", ". or 5  wait an hour",
-                "z      rest 8 hours", "Tab    overlays", "m      reveal map", "Esc    quit")
-    else:
-        line(f"Region {p.x},{p.y}  at {e.lx},{e.ly}", DIM)
-        keys = ("arrows/numpad/wasd go", "> <    stairs down/up", "<      (no stairs) map",
-                ". or 5  wait an hour", "z      rest 8 hours", "m      reveal level", "Esc    quit")
-    y = SCREEN_H - len(keys) - 1
-    for text in keys + (f"Seed {w.seed}",):
-        line(text, DIM)
-
-
-def draw_log(console: tcod.console.Console, e: Engine) -> None:
-    lines = e.messages[-(SCREEN_H - LOG_Y):]
-    if lines and e.repeats > 1:
-        lines = lines[:-1] + [f"{lines[-1]} (x{e.repeats})"]
-    for i, text in enumerate(lines):
-        age = len(lines) - 1 - i
-        shade = max(90, 230 - age * 35)
-        console.print(1, LOG_Y + i, text[: MAP_W - 1], fg=(shade, shade, shade))
-
-
-def draw(console: tcod.console.Console, e: Engine) -> None:
+def draw(console: tcod.console.Console, e: Engine, seconds: float | None = None) -> None:
+    """Draws everything: the map, then the panels over it. `seconds` is the wall clock, for what
+    moves on its own: water and fire."""
+    seconds = time.monotonic() if seconds is None else seconds
     console.clear()
     if e.level is None:
-        draw_map(console, e)
+        draw_map(console, e, seconds)
     else:
-        draw_local(console, e)
-    console.rgb["ch"][MAP_W, :] = ord("│")
-    console.rgb["fg"][MAP_W, :] = (60, 60, 70)
-    console.rgb["ch"][:MAP_W, MAP_H] = ord("─")
-    console.rgb["fg"][:MAP_W, MAP_H] = (60, 60, 70)
-    console.rgb["ch"][MAP_W, MAP_H] = ord("┤")
-    draw_sidebar(console, e)
-    draw_log(console, e)
+        draw_local(console, e, seconds)
+    draw_pointer(console, e)
+    cell = map_cell(e, *e.mouse) if e.mouse else None
+    draw_hud(console, e, e.describe(*cell) if cell else [], seconds)
     if not e.player.alive:
         text = f" You {e.player.cause}. Esc quits. "
-        console.print(max(0, (MAP_W - len(text)) // 2), MAP_H // 2, text, fg=(255, 255, 255), bg=(120, 20, 20))
+        console.print(max(0, (MAP_W - len(text)) // 2), MAP_H // 2 - 3, text, fg=(255, 255, 255), bg=(120, 20, 20))
+    draw_menu(console, e)

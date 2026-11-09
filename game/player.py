@@ -5,6 +5,9 @@ temperature is turned into what it feels like (wind chill, being wet, the shelte
 and clothing is added on top. Inside the comfortable band your body settles back to 37 C;
 outside it you cool down or heat up, and past the danger lines you start losing health.
 Being dry, sheltered and at a normal temperature heals you slowly.
+
+Stamina is spent by walking (more on hard ground) and comes back while you wait or rest. It
+doesn't hold you back yet; it's there for what comes later.
 """
 from __future__ import annotations
 
@@ -16,6 +19,8 @@ NORMAL = 37.0
 COMFORT_LOW, COMFORT_HIGH = 12.0, 29.0   # felt temperature (with clothing) that needs no effort
 COLD_DANGER, HOT_DANGER = 35.0, 39.5     # body temperatures that start to hurt
 INDOORS = 20.0                           # the air in a settlement's buildings
+TIRING = 8.0                             # stamina an hour of steady walking costs
+RESTING = 20.0                           # stamina an hour of rest brings back
 
 
 @dataclass
@@ -26,6 +31,7 @@ class Player:
     health: float = 100.0
     body: float = NORMAL     # body temperature, degrees C
     wet: float = 0.0         # 0 dry .. 100 soaked
+    stamina: float = 100.0   # 0 spent .. 100 fresh
     clothing: float = 8.0    # degrees C of insulation from what you wear
     alive: bool = True
     cause: str = ""          # what killed you
@@ -50,6 +56,22 @@ def body_status(body: float) -> str:
         if body < limit:
             return name
     return "Overheating"
+
+
+def stamina_status(stamina: float) -> str:
+    for limit, name in ((15, "Exhausted"), (40, "Weary"), (75, "Tired")):
+        if stamina < limit:
+            return name
+    return "Fresh"
+
+
+def tire(p: Player, hours: float, effort: float) -> None:
+    """Spends `hours` at `effort` (1 is steady walking, 0 is resting)."""
+    if effort > 0:
+        p.stamina -= TIRING * effort * hours
+    else:
+        p.stamina += RESTING * hours
+    p.stamina = max(0.0, min(100.0, p.stamina))
 
 
 def wet_status(wet: float) -> str:
@@ -118,6 +140,7 @@ def warnings(p: Player) -> list[str]:
         ("hot", p.body > 38.2, p.body <= 37.9, "You're overheating.", "You've cooled down."),
         ("heatstroke", p.body > HOT_DANGER, p.body <= 39.0, "Heatstroke! Get out of the sun.", None),
         ("soaked", p.wet >= 70, p.wet < 5, "You're soaked through.", "You've dried off."),
+        ("exhausted", p.stamina < 15, p.stamina >= 40, "You're exhausted.", "You've got your strength back."),
     ]
     for key, on, off, start, end in checks:
         if on and key not in p.warned:

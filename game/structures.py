@@ -54,8 +54,9 @@ def facing(x0, y0, x1, y1, tx, ty) -> tuple[int, int]:
 
 
 def building(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, toward: tuple[int, int],
-             wall: int = T.WALL, floor: int = T.WOOD_FLOOR) -> tuple[tuple[int, int], tuple[int, int]]:
-    """Walls, a floor and a door on the side facing `toward`. Returns (door, the tile outside it)."""
+             wall: int = T.WALL, floor: int = T.WOOD_FLOOR, torch: bool = True) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Walls, a floor and a door on the side facing `toward`, with a torch on the wall beside it.
+    Returns (door, the tile outside it)."""
     x1, y1 = x0 + w - 1, y0 + h - 1
     t = level.tiles
     t[x0: x1 + 1, y0: y1 + 1] = wall
@@ -71,7 +72,22 @@ def building(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int,
     outside = (door[0] + side[0], door[1] + side[1])
     if T.CLEARABLE[t[outside]]:
         t[outside] = T.PATH
+    if torch:
+        hang_torch(level, rng, door, side, (x0, y0, x1, y1))
     return door, outside
+
+
+def hang_torch(level: Level, rng: random.Random, door, side, box=None) -> None:
+    """A torch on the wall beside a door, on one side or the other, never on a corner."""
+    t = level.tiles
+    along = (0, 1) if side[0] else (1, 0)
+    spots = [(door[0] + along[0] * k, door[1] + along[1] * k) for k in (-1, 1)]
+    if box is not None:
+        x0, y0, x1, y1 = box
+        spots = [(x, y) for x, y in spots if (y0 < y < y1 if side[0] else x0 < x < x1)]
+    spots = [s for s in spots if level.in_bounds(*s) and t[s] in (T.WALL, T.STONE_WALL)]
+    if spots:
+        t[rng.choice(spots)] = T.TORCH
 
 
 def furnish(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, beds: int = 1,
@@ -115,7 +131,7 @@ def connect(level: Level, start: tuple[int, int], targets: np.ndarray, tile: int
     t = level.tiles
     cost = np.where(T.WALK[t], 2, 0).astype(np.int32)
     cost[np.isin(t, [T.ROAD, T.STREET, T.PATH, T.BRIDGE])] = 1
-    cost[np.isin(t, [T.TREE, T.PINE, T.JUNGLE_TREE, T.BOULDER, T.BUSH, T.TALL_GRASS])] = 4
+    cost[np.isin(t, [T.TREE, T.PINE, T.JUNGLE_TREE, T.BOULDER, T.BUSH, T.TALL_GRASS])] = 4   # felled
     cost[t == T.WATER] = 8
     dist = tcod.path.maxarray(t.shape, dtype=np.int32)
     dist[targets & (cost > 0)] = 0
@@ -297,6 +313,7 @@ def build_tower(level: Level, site, rng: random.Random) -> None:
     door = (cx, cy + 3)
     t[door] = T.DOOR
     t[cx, cy + 4] = T.PATH
+    hang_torch(level, rng, door, (0, 1))
     t[cx, cy] = T.STAIRS_UP
     t[cx - 3, cy] = T.TABLE
     level.exits[(cx, cy)] = ("tower", *level.region, 1)
@@ -310,7 +327,7 @@ def build_ruins(level: Level, site, rng: random.Random) -> None:
         box = place_box(level, rng, ((5, 10), (4, 7)), (0, 24))
         if box is not None:
             boxes.append(box)
-            building(level, rng, *box, middle(level), wall=T.STONE_WALL, floor=T.STONE_FLOOR)
+            building(level, rng, *box, middle(level), wall=T.STONE_WALL, floor=T.STONE_FLOOR, torch=False)
     t = level.tiles
     for x0, y0, w, h in boxes:
         for x in range(x0, x0 + w):

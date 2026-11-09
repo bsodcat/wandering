@@ -24,10 +24,17 @@ class Level:
     indoor_air: float = 18.0                           # degrees C under this level's roofs
     lookout: bool = False                              # high up: you can see the land around
     explored: np.ndarray | None = None
+    canopy: np.ndarray | None = None                   # the layer above: leaves over each tile (trees.py)
+    boughs: np.ndarray | None = None                   # branch glyphs, shown when the leaves are down
+    fire: tuple | None = field(default=None, repr=False)   # firelight, worked out when first drawn (light.py)
 
     def __post_init__(self):
         if self.explored is None:
             self.explored = np.zeros(self.tiles.shape, dtype=bool)
+        if self.canopy is None:
+            self.canopy = np.zeros(self.tiles.shape, dtype=np.uint8)
+        if self.boughs is None:
+            self.boughs = np.zeros(self.tiles.shape, dtype=np.int32)
 
     @property
     def region(self) -> tuple[int, int]:
