@@ -26,8 +26,8 @@ def load_tileset() -> tcod.tileset.Tileset:
 
 
 def handle_mouse(engine: Engine, event) -> None:
-    """Over the map: pointing looks, a left click notes what's there in the log, and the right
-    button held walks. Over a panel: clicks work its tabs and buttons, the wheel scrolls the log."""
+    """Over the map: pointing looks, a left click opens the use menu for what's there (or notes
+    it in the log if there's nothing to do with it), and the right button held walks. Over a panel: clicks work its tabs and buttons, the wheel scrolls the log."""
     panels = engine.panels
     if isinstance(event, (tcod.event.MouseMotion, tcod.event.MouseButtonDown, tcod.event.MouseButtonUp)):
         engine.mouse = tuple(event.integer_position)
@@ -37,8 +37,10 @@ def handle_mouse(engine: Engine, event) -> None:
             if i is not None:
                 engine.shop.cursor = i
         elif engine.mouse and isinstance(event, tcod.event.MouseButtonDown) \
-                and event.button == tcod.event.MouseButton.LEFT and not engine.shop.click(*engine.mouse, engine):
-            engine.shop = None
+                and event.button == tcod.event.MouseButton.LEFT:
+            modal = engine.shop
+            if not modal.click(*engine.mouse, engine) and engine.shop is modal:
+                engine.close_box()
         return
     if engine.menu.open:                    # the menu takes the mouse while it's up
         if engine.mouse and isinstance(event, tcod.event.MouseMotion):
@@ -64,12 +66,16 @@ def handle_mouse(engine: Engine, event) -> None:
         engine.goal = cell                 # steering while you hold the button
     elif isinstance(event, tcod.event.MouseButtonDown):
         if event.button == tcod.event.MouseButton.LEFT and cell is not None:
-            engine.say("You see: " + ", ".join(engine.describe(*cell)) + ".")
+            engine.pending = None
+            if not (engine.player.alive and engine.click_at(*cell)):
+                engine.say("You see: " + ", ".join(engine.describe(*cell)) + ".")
         elif event.button == tcod.event.MouseButton.RIGHT:
+            engine.pending = None
             engine.autopath, engine.disturbed, engine.goal = True, False, cell
             if cell is None or not engine.route(*cell):
                 engine.say("You don't know a way there.")
-    elif isinstance(event, tcod.event.MouseButtonUp) and event.button == tcod.event.MouseButton.RIGHT:
+    elif isinstance(event, tcod.event.MouseButtonUp) and event.button == tcod.event.MouseButton.RIGHT \
+            and engine.pending is None:
         engine.autopath, engine.goal = False, None
 
 
@@ -79,10 +85,14 @@ def walk(engine: Engine) -> None:
     something needs your attention."""
     if engine.goal is None:
         return
-    where = engine.level
-    engine.step_toward(*engine.goal)
-    if engine.disturbed or engine.level is not where or not engine.player.alive:
+    if engine.try_pending():                # walked over to do something: done
         engine.autopath, engine.goal = False, None
+        return
+    where = engine.level
+    moved = engine.step_toward(*engine.goal)
+    if engine.disturbed or engine.level is not where or not engine.player.alive or \
+            (engine.pending is not None and not moved):
+        engine.autopath, engine.goal, engine.pending = False, None, None
 
 
 def begin(action: tuple, menu: Menu) -> Engine:

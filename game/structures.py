@@ -3,8 +3,8 @@
 Builders work on a region's local map after its land, rivers and roads are drawn. The roads
 from the world map all lead into the middle of a settlement, so places grow outward from there:
 
-- town:    a paved square with a well and market stalls, a named inn with a bar, a bakery
-           and a butcher's, a dozen or so houses with their doors facing the square, streets
+- town:    a paved square with a well and market stalls, a named inn with a bar, a bakery,
+           a butcher's and an armourer's (weapon racks: the shopkeeper's), a dozen or so houses with their doors facing the square, streets
            out to every door, vegetable gardens and a pasture outside, docks if it's on the
            coast, and a lumber camp if there are woods about
 - village: a green with a well, a handful of houses, paths, fields of whatever grain suits
@@ -411,7 +411,8 @@ def inn_stairs(level: Level, x0: int, y0: int, x1: int, y1: int, door) -> None:
 
 
 def shop(level: Level, rng: random.Random, kind: str, name: str, ring):
-    """A bakery (bread ovens, flour, a counter) or a butcher's (meat hooks, a counter)."""
+    """A bakery (bread ovens, flour, a counter), a butcher's (meat hooks, a counter) or an
+    armourer's (weapon racks, a counter)."""
     box = place_box(level, rng, ((6, 8), (5, 6)), ring)
     if box is None:
         return None
@@ -420,6 +421,9 @@ def shop(level: Level, rng: random.Random, kind: str, name: str, ring):
     if kind == "bakery":
         furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=2, barrels=2,
                 extra=((T.OVEN, 2),), middle=T.COUNTER)
+    elif kind == "armoury":
+        furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=2, barrels=1,
+                extra=((T.RACK, 3),), middle=T.COUNTER)
     else:
         furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=2, barrels=1,
                 extra=((T.HOOKS, 2),), middle=T.COUNTER)
@@ -433,7 +437,8 @@ def build_town(level: Level, site, rng: random.Random, land=None) -> None:
     square(level, 7, 3, stalls=6)
     doors = [inn_building(level, rng, (9, 16)),
              shop(level, rng, "bakery", "the bakery", (9, 20)),
-             shop(level, rng, "butcher", "the butcher's", (9, 20))]
+             shop(level, rng, "butcher", "the butcher's", (9, 20)),
+             shop(level, rng, "armoury", "the armourer's", (9, 22))]
     doors = [d for d in doors if d is not None]
     doors += houses(level, rng, rng.randint(11, 16), (9, 30))
     gates = fields(level, rng, rng.randint(3, 5), (30, 44))

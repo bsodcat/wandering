@@ -42,6 +42,8 @@ def town_engine(hour=11) -> Engine:
     e = Engine.new(1)
     e.minutes = 40 * MINUTES_PER_DAY + hour * MINUTES_PER_HOUR
     e.enter_region()
+    e.level.creatures.clear()          # no birds underfoot (game/wild.py has its own tests)
+    e.level.wild_spec.clear()
     return e
 
 

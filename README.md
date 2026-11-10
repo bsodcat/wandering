@@ -3,7 +3,7 @@
 **Gathering to Aevum: The Necromancer's Key**
 *Chapter II: Wandering the Mundane*
 
-Version 1.2.0. Windows players can download the exe from the
+Version 1.3.0. Windows players can download the exe from the
 [Releases](https://github.com/bsodcat/wandering/releases) page and run it; nothing else
 to install. Settings are kept in `%APPDATA%/newrogue/settings.json`.
 
@@ -55,12 +55,17 @@ summer's morning, and explored from the start:
 - **A hill**, north-east: 14 levels high, steeper on its north side, for climbing and for
   seeing over.
 - **A dig site**: the dirt patch in the north-west has something buried under every other tile.
-- **Pens**, south: one of each of the townsfolk (baker, butcher, innkeeper, barkeeper, farmer,
-  fisherman, lumberjack), each with a bit of their trade, then one of every animal, the dog
+- **Pens**, south: one of each of the townsfolk (baker, butcher, innkeeper, barkeeper,
+  shopkeeper, farmer, fisherman, lumberjack), each with a bit of their trade, then one of every animal, the dog
   and the cat among them.
 - **Ground**, north-west: a patch of every kind of ground, and a broadleaf wood, a pine wood
   and a jungle.
 - **Water**, east: a river with a bridge, and a lake with a beach and a pier.
+- **The wilds**, west: a fenced wood with a pack of three wolves and the rabbits, squirrels
+  and birds they hunt.
+- **A goblin cave**, below the wilds: two guards inside the door (sleeping in shifts), a
+  patrol, a hunter and a cook at their fire with bedrolls, food and a barrel of loot, rats,
+  and a roost of sleeping bats in the far corner by a pool.
 - **A town and a village**, far south: built and peopled the same way as in the world, with
   an inn, a bakery, a butcher's, houses, fields, pastures and a lumber camp.
 
@@ -79,7 +84,8 @@ stairs lead nowhere; leave by Esc, then Main menu.
 | `g` | | pick up what's at your feet |
 | `x` | | dig where you stand (needs a shovel) |
 | `i` | the Inv tab: what you carry | same |
-| walk into... | | a person: talk (or trade, if they trade); a dog or cat: pet it; a tree, with an axe: fell it |
+| `e` | | the use menu: what you can do here and next to you (talk, trade, pet, attack, open a barrel, sleep, pick up, eat, wield, wear) |
+| walk into... | | a person: talk (or trade, if they trade); a dog or cat: pet it; a creature: strike it; a tree, with an axe: fell it |
 | Tab | right panel: Info, Map, Log, Inv, hidden | same |
 | `c` | show or hide the stats panel | same |
 | PgUp / PgDn, wheel | scroll the Log tab | same |
@@ -257,13 +263,18 @@ and rough in the hills and mountains. It runs on across region borders like the 
   the layer above.
 - **Shovel**: there's one in a house in every town and village. `x` digs where you stand, on
   open ground (grass, dirt, sand, mud, snow): half an hour's work. You only find what was buried
-  there (coins, arrowheads, pottery, old bones, rusty daggers, now and then a silver ring), more
-  in old ruins. Digging leaves turned earth (`░`) but doesn't change the height.
+  there: coins, arrowheads, pottery, old bones, rusty daggers, fairly often a trinket (a brass
+  button, a bone die, a tin whistle...), and only under a town, now and then a silver or gold
+  ring. There's more in old ruins. Digging leaves turned earth (`░`) but doesn't change the
+  height.
 - Dug ground waits for rain. Four hours after the first rain falls on it, grass grows back.
 
 **Shops** (`game/shop.py`). Walk into someone who trades, while they're at work, and their shop
 opens: Up/Down or the mouse to choose, Enter to trade, Esc to leave.
 - A **lumberjack** buys logs at 3 coins each, once you've cut some.
+- An **innkeeper** serves hot soup for 4 coins: it warms you, and treats wolf fever.
+- A town's **shopkeeper** (at the armourer's, 08:00-18:00) sells common weapons and armour,
+  and buys trinkets and rings.
 - A **barkeeper** lets a room upstairs for 8 coins. You get a room key, good till 10:00 the
   next morning. Sleep (`z`) in any bed upstairs and you sleep till 07:00, waking rested.
   Without a key the beds are off limits.
@@ -271,6 +282,62 @@ opens: Up/Down or the mouse to choose, Enter to trade, Esc to leave.
 **Inns** have two more floors: stairs up to a corridor of guest rooms with a bed in each, and
 down to a stone cellar of barrels. Each inn has an innkeeper (07:00-21:00) and a barkeeper
 (10:00-24:00, behind the bar).
+
+**The use menu** (`e`, or a left click on something you can use). It lists what you can do:
+talk to someone, trade, pet a dog, attack a creature, open a barrel, sleep or rest in a bed,
+pick things up, take the stairs, fell a tree, dig, eat, wield a weapon, wear armour. Pick
+something out of reach and you walk over to it first (a walk stops if a creature's in the
+way: it never starts a fight). Clicking on plain ground still just notes it in the log.
+
+**Barrels** hold things: food in cellars and houses, odds and ends in sheds, loot in a goblin
+camp. Open one from the use menu to take things out or put things in; it keeps what you leave.
+
+**Fighting** (`game/combat.py`). Walk into a creature to strike it. A blow lands by chance
+(the weapon's, less how nimble the creature is) and does the weapon's damage; blows at you are
+cut by your armour.
+
+| Weapon | Damage | | Armour | Stops |
+| --- | --- | --- | --- | --- |
+| fists | 1-3 | | padded jerkin (6 coins) | 1 |
+| club (3 coins) | 2-5 | | leather coat (12) | 2 |
+| dagger (6) | 2-4, quick | | mail shirt (30) | 3 |
+| spear (9) | 3-7 | | iron helm (10) | 1, on your head |
+| short sword (16) | 3-8 | | wooden shield (6) | 1, and turns aside one blow in six |
+| axe, shovel, rusty dagger, crude knife | 2-6, 1-4, 1-3, 1-4 | | | |
+
+Wield one weapon, and wear one piece of armour in each place, from the use menu. Food (roast
+meat, apples, bread, salt fish) gives back stamina and a little health. You can't rest or wait
+with wolves or goblins about.
+
+**Wild things** (`game/wild.py`) live on the local maps, and act as the clock runs:
+- **Small game**: rabbits and birds in the open, squirrels in the woods, rats in caves. They
+  nibble about, leaving a scent where they go, and run from anything that hunts them.
+  Squirrels run up the nearest tree; birds fly over anything.
+- **Wolves** keep a territory in the forests and wilds (about half of forest regions have a
+  pack), and commonly den in caves, mostly in packs of two to five, rarely alone. The pack
+  roams behind its leader along trails it has worn before. Hungry, they follow the freshest
+  scent, then stalk what they find, slowly and low, until they're close enough to rush it.
+  They only go for you if they're very hungry and there are two or more of them, or you've
+  hurt one. They flee if hurt (and a hurt wolf goes slowly), outnumbered (a wanderer with a
+  real weapon and body armour counts as two), or left alone; a trail gone cold, they lose
+  interest and go home.
+- **Bats** roost in clusters deep in caves, asleep, until you come near or something makes a
+  noise; then they all wake, shrieking. They flit about over anything in the way, keeping off
+  you, and settle back to sleep when it's quiet. Hurt or corner one and the bats around it
+  swarm you together for a while.
+- **Goblins** live in some caves: guards at the way in, sleeping in shifts; patrols walking
+  the passages; and deep down a camp with a fire, bedrolls, a pile of food and a barrel of
+  loot, where hunters bring rats and bats (and any carcass they find) for the cook to roast.
+  They sleep through the day, wake if you come close, go to look at any noise (a fight,
+  shrieking bats, an alarm), shout the alarm when they see you and fight, but run when badly
+  hurt or outnumbered two to one. Each carries a few things you can take once it's dead.
+
+**Wolf fever** (`game/sickness.py`). Now and then (3%) a wolf's bite goes bad. Half a day
+later the fever comes on: you stop healing and lose a little health every hour. Left a week,
+it takes hold, and you lose health fast until you die of it. A bowl of hot soup from an
+innkeeper treats it: you start to feel better and heal again (up to 75), but it takes two or
+three days of good sleep (a rest of six hours or more, or a bed at an inn, on different days)
+before the fever breaks.
 
 **Pets.** Every town has a dog or a cat with a name. It wanders the town, and when you're
 near it trots after you, keeping a step or two off (the dog more keenly than the cat). Walk
@@ -379,6 +446,11 @@ game/structures.py towns, villages, inns, docks, towers, ruins, caves, and the l
 game/tiles.py      local tile table: looks, walking, sight, step time, roofs
 game/trees.py      trunks and crowns, seasons, keeping ways in clear
 game/people.py     townsfolk and animals: who lives where, their hours, walking, talking
+game/wild.py       wolves, small game, bats and goblins: where they live, how they behave
+game/combat.py     weapons, armour, and how blows land
+game/sickness.py   wolf fever, soup and sleep
+game/items.py      things you carry, dig up and find in barrels
+game/shop.py       shops, the use menu and barrels
 game/farming.py    which grain and herd suit a climate, and the fields through the year
 game/light.py      firelight from hearths and torches, and how it flickers
 game/level.py      a local map, its stairs and its canopy layer

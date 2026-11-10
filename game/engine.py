@@ -22,6 +22,15 @@ someone who trades opens their shop (game/shop.py); walking into a dog or cat pe
 key from an inn's barkeeper lets you sleep (z) in a bed upstairs. Dug ground grows back over a
 few hours once it's rained on.
 
+Wild things (game/wild.py) live on local maps beside the people: small game, wolves in the
+wilds and in caves, bats and goblins underground. Walk into one to strike it (game/combat.py);
+a wolf's bite can, rarely, give you wolf fever (game/sickness.py), which hot soup from an
+innkeeper treats. You can't rest with wolves or goblins about.
+
+e (or a left click on something you can use) opens the use menu: talk, trade, pet, attack,
+open a barrel, sleep in a bed, pick things up, eat, wield and wear. Something out of reach,
+you walk over to first.
+
 Local maps are built when first visited and kept, with what you've explored, for the rest of
 the game. The weather and temperature come from the region you're in either way.
 """
@@ -34,19 +43,22 @@ import tcod
 from tcod.event import KeySym, Modifier
 
 from . import biomes as B
+from . import combat
 from . import elevation
 from . import items
 from . import people
 from . import shop as shops
+from . import sickness
 from . import tiles as T
 from . import trees
+from . import wild
 from .farming import PETS, crop_stage
 from .light import SEEN_FROM_AFAR, firelight
 from .climate import (DAYS_PER_SEASON, MINUTES_PER_DAY, MINUTES_PER_HOUR, Climate, Conditions, hour_of_day,
                       latitude, shelter_at, snow_cover, time_of_day)
 from .level import Level
 from .localgen import LOCAL_H, LOCAL_W, make_level, node_local
-from .player import Player, expose, tire
+from .player import NORMAL, Player, expose, tire
 from .options import Menu
 from .ui import Panels
 from .worldgen import World, generate, travel_cost
@@ -64,7 +76,12 @@ OVERWORLD_EFFORT = 0.5  # a day's travel is steadier going than scrambling about
 MENU_KEY = KeySym.ESCAPE  # the pause menu: resume, options, quit
 FULLSCREEN_KEY = KeySym.F11
 OVERLAYS = ["Normal", "Elevation", "Temperature", "Moisture", "Weather"]
-PICKUP_KEY, DIG_KEY, BAG_KEY = KeySym.G, KeySym.X, KeySym.I
+PICKUP_KEY, DIG_KEY, BAG_KEY, USE_KEY = KeySym.G, KeySym.X, KeySym.I, KeySym.E
+ATTACK_MINUTES, ATTACK_EFFORT = 0.5, 1.5  # a blow
+MEAL_MINUTES = 5
+SOUP_MINUTES = 15
+DIRECTIONS = {(0, 0): "here", (0, -1): "north", (0, 1): "south", (-1, 0): "west", (1, 0): "east",
+              (-1, -1): "north-west", (1, -1): "north-east", (-1, 1): "south-west", (1, 1): "south-east"}
 CHOP_MINUTES, CHOP_EFFORT = 20, 2.5     # felling a tree
 DIG_MINUTES, DIG_EFFORT = 30, 2.5       # digging a hole
 REGROW_MINUTES = 4 * 60                 # dug ground greens over this long after rain first falls on it
@@ -131,6 +148,8 @@ class Engine:
         self.room_until: float | None = None  # when your inn room key goes back
         self.relief = False                # o on a local map: colour it by height
         self.disturbed = False             # something happened that should stop a walk
+        self.pending = None                # (x, y, do, stand on it, who): to do once you get there
+        self.rng = random.Random()         # blows and bites
         self.local_visible = np.zeros((1, 1), dtype=bool)
         self.update_view()
 
@@ -395,6 +414,9 @@ class Engine:
         nx, ny = self.lx + dx, self.ly + dy
         if not level.in_bounds(nx, ny):
             return self.cross_border(dx, dy, nx, ny)
+        beast = wild.creature_at(level, nx, ny)
+        if beast is not None:
+            return self.attack(beast)
         tile = int(level.tiles[nx, ny])
         if tile in trees.KIND and self.player.inventory.count("axe"):
             return self.chop(nx, ny)
@@ -456,6 +478,238 @@ class Engine:
 
     # ------------------------------------------------------------- things to do
 
+    def attack(self, c) -> bool:
+        """Strikes a creature with whatever you're holding."""
+        wild.player_attack(self.level, self, c, self.rng)
+        self.autopath = False
+        self.pass_time(ATTACK_MINUTES / 60, effort=ATTACK_EFFORT)
+        return False
+
+    def heal(self, amount: float) -> None:
+        """Health back (from food or sleep), as far as a fever lets it come."""
+        p = self.player
+        s = p.sickness
+        top = 100.0
+        if s is not None and s.shown and not s.treated:
+            top = p.health
+        elif s is not None and s.treated:
+            top = max(p.health, sickness.TREATED_CAP)
+        p.health = min(top, p.health + amount)
+
+    def eat(self, kind: str) -> str:
+        p = self.player
+        if not p.inventory.take(kind):
+            return f"You haven't got any {items.KINDS[kind].plural}."
+        health, stamina = items.KINDS[kind].meal
+        self.heal(health)
+        p.stamina = min(100.0, p.stamina + stamina)
+        self.pass_time(MEAL_MINUTES / 60)
+        return f"You eat {items.amount(kind, 1)}."
+
+    def eat_soup(self) -> str:
+        """A bowl of the innkeeper's hot soup: warming, and the cure for wolf fever."""
+        p = self.player
+        p.body = max(p.body, min(NORMAL, p.body + 1.5))
+        p.stamina = min(100.0, p.stamina + 15)
+        text = sickness.soup(p)
+        self.heal(5)
+        self.pass_time(SOUP_MINUTES / 60)
+        return text
+
+    def open_barrel(self, x: int, y: int) -> None:
+        """What's in a barrel: take things out, put things in."""
+        level = self.level
+        store = level.stores.get((x, y))
+        if store is None:
+            store = level.stores[(x, y)] = items.fill_barrel(level, x, y)
+        bag = self.player.inventory
+
+        def shift(src, dst, kind, verb):
+            n = src.count(kind)
+            src.take(kind, n)
+            dst.add(kind, n)
+            return f"You {verb} {items.amount(kind, n)}."
+
+        def take_all(e):
+            got = dict(store)
+            for k, n in got.items():
+                bag.add(k, n)
+            store.clear()
+            return f"You take {items.describe_pile(got)}."
+
+        def build(e):
+            picker.greeting = ("Inside: " + items.describe_pile(store) + ".") if store else "It's empty."
+            opts = [shops.Option(f"Take {items.amount(k, n)}", lambda e, k=k: shift(store, bag, k, "take"), stay=True)
+                    for k, n in store.items()]
+            if len(store) > 1:
+                opts.append(shops.Option("Take everything", take_all, stay=True))
+            opts += [shops.Option(f"Put in {items.amount(k, n)}", lambda e, k=k: shift(bag, store, k, "put in"),
+                                  stay=True) for k, n in bag.items() if k != "room key"]
+            return opts
+
+        picker = shops.Picker("A barrel", build, leave="Close the barrel", leave_text="You close the barrel.")
+        picker.refresh(self)
+        self.shop = picker
+        self.autopath = False
+
+    def use_menu(self) -> None:
+        """e: everything you can do here and next to you."""
+        if self.level is None:
+            self.say("Step down into the region (Enter) first.")
+            return
+        opts = []
+        for (dx, dy), where in DIRECTIONS.items():
+            x, y = self.lx + dx, self.ly + dy
+            if self.level.in_bounds(x, y):
+                suffix = "" if (dx, dy) == (0, 0) else f" ({where})"
+                opts += [shops.Option(o.label + suffix, o.do, o.ok) for o in self.options_at(x, y)]
+        if not opts:
+            self.say("There's nothing to use here.")
+            return
+        menu = shops.Picker("What will you do?", lambda e: opts)
+        menu.refresh(self)
+        self.shop = menu
+        self.autopath = False
+
+    def click_at(self, x: int, y: int) -> bool:
+        """A left click on the map: the use menu for what's there, if there's anything to do
+        with it. Returns whether it opened."""
+        if self.level is None or not self.level.in_bounds(x, y) or not self.level.explored[x, y]:
+            return False
+        opts = self.options_at(x, y)
+        if not opts:
+            return False
+        lines = self.describe(x, y)
+        look = shops.Option("Look", lambda e: "You see: " + ", ".join(lines) + ".")
+        menu = shops.Picker(lines[0] if lines else "There", lambda e: opts + [look])
+        menu.refresh(self)
+        self.shop = menu
+        self.autopath = False
+        return True
+
+    def options_at(self, x: int, y: int) -> list:
+        """What you could do with what's at (x, y). Each walks you over first if it's out of
+        reach."""
+        level, p = self.level, self.player
+        out = []
+        here = (x, y) == (self.lx, self.ly)
+        seen = bool(self.local_visible[x, y]) if self.local_visible.shape == level.tiles.shape else False
+        go = self.go_do
+        beast = wild.creature_at(level, x, y)
+        if beast is not None and seen and not here:
+            out.append(shops.Option(f"Attack the {beast.name}",
+                                    lambda e, c=beast: go(c.x, c.y, lambda e: e.attack(c), who=c)))
+        a = people.actor_at(level, x, y)
+        if a is not None and seen and not here:
+            first = a.name.split()[0]
+            if a.kind in PETS:
+                out.append(shops.Option(f"Pet {a.name}", lambda e, a=a: go(a.x, a.y, lambda e: e.talk_to(a), who=a)))
+            elif not a.animal:
+                if self.at_work(a) and a.kind in ("lumberjack", "barkeeper", "innkeeper", "shopkeeper"):
+                    out.append(shops.Option(f"Trade with {first}",
+                                            lambda e, a=a: go(a.x, a.y, lambda e: e.trade_with(a), who=a)))
+                out.append(shops.Option(f"Talk to {first}", lambda e, a=a: go(a.x, a.y, lambda e: e.talk_to(a), who=a)))
+        tile = int(level.tiles[x, y])
+        if tile == T.BARREL:
+            out.append(shops.Option("Open the barrel", lambda e: go(x, y, lambda e: e.open_barrel(x, y))))
+        if tile in (T.BED, T.BEDROLL):
+            inn = level.key[0] == "inn_up" and p.inventory.count("room key")
+            out.append(shops.Option("Sleep in the bed till morning" if inn else f"Rest on the {T.TILES[tile].name}",
+                                    lambda e: go(x, y, lambda e: e.rest(), on=True)))
+        pile = level.items.get((x, y))
+        if pile:
+            out.append(shops.Option(f"Pick up {items.describe_pile(pile)}",
+                                    lambda e: go(x, y, lambda e: e.pick_up(x, y))))
+        if (x, y) in level.exits:
+            way = "down" if tile == T.STAIRS_DOWN else "up"
+            out.append(shops.Option(f"Take the stairs {way}", lambda e: go(x, y, lambda e: e.use_stairs(), on=True)))
+        if tile in trees.KIND and p.inventory.count("axe") and beast is None:
+            out.append(shops.Option("Fell the tree", lambda e: go(x, y, lambda e: e.chop(x, y))))
+        if here:
+            out += self.own_options()
+        return out
+
+    def own_options(self) -> list:
+        """What you can do with what you carry, and where you stand."""
+        p, level = self.player, self.level
+        bag = p.inventory
+        out = []
+        tile = int(level.tiles[self.lx, self.ly])
+        if bag.count("shovel") and T.DIGGABLE[tile] and not level.underground:
+            out.append(shops.Option("Dig here", lambda e: e.dig()))
+        for kind in items.FOODS:
+            if bag.count(kind):
+                out.append(shops.Option(f"Eat {items.amount(kind, 1)} ({bag.count(kind)})", lambda e, k=kind: e.eat(k)))
+        held, _ = combat.weapon_of(p)
+        for kind in combat.WEAPONS:
+            if bag.count(kind) and kind != held:
+                out.append(shops.Option(f"Wield the {kind}", lambda e, k=kind: combat.wield(e.player, k)))
+        if held:
+            out.append(shops.Option(f"Put away the {held}", lambda e: combat.wield(e.player, None)))
+        on = combat.worn(p)
+        for kind in combat.ARMOUR:
+            if bag.count(kind):
+                if kind in on.values():
+                    out.append(shops.Option(f"Take off the {kind}", lambda e, k=kind: combat.take_off(e.player, k)))
+                else:
+                    out.append(shops.Option(f"Wear the {kind}", lambda e, k=kind: combat.wear(e.player, k)))
+        if tile not in (T.BED, T.BEDROLL):
+            out.append(shops.Option(f"Rest {REST_HOURS} hours", lambda e: e.rest()))
+        return out
+
+    def go_do(self, x: int, y: int, do, on: bool = False, who=None):
+        """Does `do` now if (x, y) is in reach (or underfoot, if `on`), or walks you there first."""
+        if (on and (x, y) == (self.lx, self.ly)) or (not on and max(abs(x - self.lx), abs(y - self.ly)) <= 1):
+            return do(self)
+        goal = (x, y)
+        if not on and not self.level.walkable(x, y):        # beside it, the nearest side
+            sides = [(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                     if (dx or dy) and self.level.walkable(x + dx, y + dy) and self.level.explored[x + dx, y + dy]]
+            if not sides:
+                return "You can't get at it."
+            goal = min(sides, key=lambda c: max(abs(c[0] - self.lx), abs(c[1] - self.ly)))
+        if not self.route(*goal):
+            return "You don't know a way there."
+        self.pending = (x, y, do, on, who)
+        self.goal, self.autopath, self.disturbed = goal, True, False
+        return None
+
+    def try_pending(self) -> bool:
+        """On a walk to do something: does it once you're there. Returns whether it's done (or
+        can't be)."""
+        if self.pending is None:
+            return False
+        x, y, do, on, who = self.pending
+        if who is not None:
+            if who not in self.level.actors and who not in self.level.creatures:
+                self.pending = None
+                return True
+            x, y = who.x, who.y
+            self.goal = (x, y)
+            self.pending = (x, y, do, on, who)
+        if (on and (x, y) == (self.lx, self.ly)) or (not on and max(abs(x - self.lx), abs(y - self.ly)) <= 1):
+            self.pending = None
+            text = do(self)
+            if text:
+                self.say(text)
+            return True
+        return False
+
+    def talk_to(self, a) -> None:
+        self.say(people.talk(a, self.level, self))
+        if a.kind in PETS:
+            self.pass_time(1 / 60)
+
+    def trade_with(self, a) -> None:
+        shop = shops.for_actor(a, self) if self.at_work(a) else None
+        if shop is None:
+            self.say(f"{a.name.split()[0]} has nothing to trade with you just now.")
+            return
+        a.met = True
+        self.say(f'{a.name.split()[0]}: "{shop.greeting}"')
+        self.shop = shop
+        self.autopath = False
+
     def chop(self, x: int, y: int) -> bool:
         """Fells the tree at (x, y) with your axe."""
         level = self.level
@@ -466,11 +720,12 @@ class Engine:
         self.pass_time(CHOP_MINUTES / 60, effort=CHOP_EFFORT)
         return False
 
-    def pick_up(self) -> None:
+    def pick_up(self, x: int | None = None, y: int | None = None) -> None:
         if self.level is None:
             self.say("There's nothing to pick up out here; step down into the region (Enter).")
             return
-        got = items.pick_up(self.level, self.lx, self.ly, self.player.inventory)
+        x, y = (self.lx, self.ly) if x is None else (x, y)
+        got = items.pick_up(self.level, x, y, self.player.inventory)
         if not got:
             self.say("There's nothing here to pick up.")
             return
@@ -538,9 +793,20 @@ class Engine:
             ROOM_UNTIL_HOUR * MINUTES_PER_HOUR
         self.say("The rooms are upstairs. Any free bed is yours tonight.")
 
+    def danger(self) -> bool:
+        """Whether something's about that won't let you rest (and says so)."""
+        if self.level is None:
+            return False
+        about = wild.threatening(self.level, self)
+        if about:
+            self.say(f"You can't rest with {wild.a_name(about[0].name)} about!")
+        return bool(about)
+
     def rest(self) -> None:
         level = self.level
         p = self.player
+        if self.danger():
+            return
         if level is not None and level.key[0] == "inn_up" and level.tiles[self.lx, self.ly] == T.BED:
             if not p.inventory.count("room key"):
                 self.say("These beds are for paying guests. The barkeeper downstairs lets them.")
@@ -549,11 +815,17 @@ class Engine:
             self.say(f"You sleep soundly in a warm bed {level.name[0].lower()}{level.name[1:]}.")
             self.wait(hours)
             if p.alive:
-                p.stamina, p.health, p.wet = 100.0, min(100.0, p.health + 30), 0.0
+                p.stamina, p.wet = 100.0, 0.0
+                self.heal(30)
                 self.say("You wake well rested.")
+                for text in sickness.slept(p, self.minutes, hours):
+                    self.say(text)
             return
         self.say(f"You rest for {REST_HOURS} hours.")
         self.wait(REST_HOURS)
+        if p.alive:
+            for text in sickness.slept(p, self.minutes, REST_HOURS):
+                self.say(text)
 
     def cross_border(self, dx: int, dy: int, nx: int, ny: int) -> bool:
         level = self.level
@@ -647,6 +919,11 @@ class Engine:
         someone = people.actor_at(level, x, y)
         if someone is not None and self.local_visible[x, y] and not here:
             lines = people.describe(someone) + lines
+        beast = wild.creature_at(level, x, y)
+        if beast is not None and self.local_visible[x, y] and not here:
+            lines = wild.describe(beast) + lines
+        if level.stores.get((x, y)) is not None and tile.id == T.BARREL:
+            lines.append("Holds " + items.describe_pile(level.stores[(x, y)]))
         inside = level.building_at(x, y)
         if inside is not None and inside.name:
             lines.append(f"{'In' if T.ROOF[tile.id] else 'At'} {inside.name}")
@@ -755,6 +1032,11 @@ class Engine:
             return False
         here = (self.lx, self.ly) if self.level is not None else (self.player.x, self.player.y)
         dx, dy = path[0][0] - here[0], path[0][1] - here[1]
+        beast = wild.creature_at(self.level, *path[0]) if self.level is not None else None
+        if beast is not None:                 # a walk never starts a fight
+            self.say(f"There's {wild.a_name(beast.name)} in the way.")
+            self.disturbed = True
+            return False
         return self.move_local(dx, dy) if self.level is not None else self.move(dx, dy)
 
     # ------------------------------------------------------------- time
@@ -773,6 +1055,7 @@ class Engine:
             left -= dt
             before, before_time = self.now, time_of_day(self.lat, self.minutes)
             tire(p, dt, effort)
+            health_before = p.health
             self.minutes += dt * MINUTES_PER_HOUR
             self.now = self.weather()
             if not self.underground:
@@ -782,14 +1065,22 @@ class Engine:
                 self.say(text)
                 self.disturbed = True       # a warning about your body stops a walk
             soak = 0.0
+            for text in sickness.hour(p, self.minutes, dt, health_before):
+                self.say(text)
+                self.disturbed = True
             self.regrow()
         if self.room_until is not None and self.minutes >= self.room_until:
             self.room_until = None
             if self.player.inventory.take("room key", self.player.inventory.count("room key")):
                 self.say("It's mid-morning: your room key goes back to the barkeeper.")
         if self.level is not None:
+            if p.alive:
+                self.level.scent[self.lx, self.ly] = self.minutes     # wolves can follow you too
             people.advance(self.level, self.minutes, self)
+            wild.advance(self.level, self.minutes, self, self.rng)
         self.update_view()
+        if self.level is not None:
+            wild.notice(self.level, self)
 
     def news(self, before: Conditions, before_time: str) -> None:
         now, now_time = self.now, time_of_day(self.lat, self.minutes)
@@ -836,6 +1127,12 @@ class Engine:
 
     # ------------------------------------------------------------- keys
 
+    def close_box(self) -> None:
+        """Closes the shop, menu or barrel that's open."""
+        modal, self.shop = self.shop, None
+        if modal is not None and modal.leave_text:
+            self.say(modal.leave_text)
+
     def handle_key(self, sym: KeySym, mod: int = 0) -> bool:
         """Does what a key press means. Returns False when the game should close."""
         shift = bool(mod & Modifier.SHIFT)
@@ -847,10 +1144,11 @@ class Engine:
             if result == "title":
                 self.to_title = True
             return result != "quit"
+        self.pending = None
         if self.shop is not None:
-            if not self.shop.handle_key(sym, self):
-                self.shop = None
-                self.say("You leave off trading.")
+            modal = self.shop
+            if not modal.handle_key(sym, self) and self.shop is modal:
+                self.close_box()
             return True
         if sym == MENU_KEY:
             self.menu.show("pause")
@@ -867,6 +1165,8 @@ class Engine:
             self.panels.show("inv")
         elif sym == PICKUP_KEY and self.player.alive:
             self.pick_up()
+        elif sym == USE_KEY and self.player.alive:
+            self.use_menu()
         elif sym == DIG_KEY and self.player.alive:
             self.dig()
         elif sym == REVEAL_KEY:
@@ -893,7 +1193,8 @@ class Engine:
             else:
                 self.move_local(*MOVES[sym])
         elif sym in WAIT_KEYS:
-            self.wait(1)
+            if not self.danger():
+                self.wait(1)
         elif sym == REST_KEY:
             self.rest()
         return True

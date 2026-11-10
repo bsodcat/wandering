@@ -40,6 +40,9 @@ class Player:
     cause: str = ""          # what killed you
     warned: set = field(default_factory=set)
     inventory: Inventory = field(default_factory=lambda: Inventory(coin=START_COINS))
+    wielding: str | None = None   # the weapon in your hand (game/combat.py)
+    wearing: dict = field(default_factory=dict)   # where -> the armour you have on there
+    sickness: object = None       # game/sickness.py: wolf fever, if a bite went bad
 
 
 def feels_like(air: float, wind: float, wet: float, shelter: float) -> float:

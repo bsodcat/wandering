@@ -86,11 +86,24 @@ class LookTests(unittest.TestCase):
         far = (p.x + 3, p.y)
         self.assertTrue(any("away" in line or "No known way" in line for line in e.describe(*far)))
 
-    def test_left_click_notes_it_in_the_log(self):
+    def test_left_click_on_yourself_opens_your_use_menu(self):
         e = new_local()
         sx, sy = screen_of(e, e.lx, e.ly)
         main.handle_mouse(e, press(sx, sy, E.MouseButton.LEFT))
+        self.assertIsNotNone(e.shop)                       # rest, and so on; and Look
+        e.shop.cursor = e.shop.labels().index("Look")
+        e.handle_key(E.KeySym.RETURN)
         self.assertTrue(e.messages[-1].startswith("You see: You, on"))
+        self.assertIsNone(e.shop)
+
+    def test_left_click_on_plain_ground_notes_it_in_the_log(self):
+        e = new_local()
+        x, y = far_walkable(e)
+        e.level.items.pop((x, y), None)
+        sx, sy = screen_of(e, x, y)
+        main.handle_mouse(e, press(sx, sy, E.MouseButton.LEFT))
+        self.assertIsNone(e.shop)
+        self.assertTrue(e.messages[-1].startswith("You see: "))
 
     def test_hover_shows_in_the_sidebar_and_on_the_map(self):
         e = new_local()

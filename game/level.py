@@ -63,6 +63,14 @@ class Level:
     items: dict = field(default_factory=dict)          # (x, y) -> [item kind, ...] lying there
     buried: dict = field(default_factory=dict)         # (x, y) -> (item kind, how many) under the ground
     dug: dict = field(default_factory=dict)            # (x, y) -> [the ground it was, when rain first fell on it]
+    stores: dict = field(default_factory=dict)         # (x, y) -> Inventory: what's in a barrel, once opened
+    creatures: list = field(default_factory=list)      # wild things (game/wild.py)
+    wild_minutes: float | None = None                  # the clock when they were last moved
+    wild_spec: list = field(default_factory=list)      # (kind, how many, home, reach): small game that comes back
+    camp: dict = field(default_factory=dict)           # a goblin camp: "hearth", "store", "beds", "stairs"
+    noises: list = field(default_factory=list)         # (x, y, when, how far it carries): what creatures hear
+    scent: np.ndarray | None = None                    # when something last passed each tile (for wolves)
+    trail: np.ndarray | None = None                    # how worn each tile is by wolves' feet
 
     def __post_init__(self):
         if self.explored is None:
@@ -73,6 +81,10 @@ class Level:
             self.boughs = np.zeros(self.tiles.shape, dtype=np.int32)
         if self.elev is None:
             self.elev = np.zeros(self.tiles.shape, dtype=np.int16)
+        if self.scent is None:
+            self.scent = np.full(self.tiles.shape, -1e9, dtype=np.float64)
+        if self.trail is None:
+            self.trail = np.zeros(self.tiles.shape, dtype=np.int16)
 
     @property
     def region(self) -> tuple[int, int]:

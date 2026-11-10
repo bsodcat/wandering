@@ -10,6 +10,10 @@
     south        pens with one of every townsfolk (each with a bit of their trade) and one of
                  every animal, the dog and the cat among them
     east         a river with a bridge, and a lake with a beach and a pier
+    west         the wilds: a fenced wood with a pack of wolves and the small game they hunt
+                 (rabbits, squirrels, birds), and below it a goblin cave: guards at the door,
+                 a patrol, a hunter and a cook at their camp fire, a barrel of loot, rats, and
+                 bats asleep in the far corner
     far south    a town (inn, bakery, butcher's, houses, gardens, a pasture, a lumber camp) and
                  a village (wheat, sheep), built and peopled the same way as in the world
 
@@ -27,6 +31,7 @@ from . import people
 from . import structures
 from . import tiles as T
 from . import trees
+from . import wild
 from .farming import ANIMALS, PETS, Land
 from .level import Level, Place
 from .worldgen import Site
@@ -43,7 +48,7 @@ GALLERY = [   # (row name, tiles) - every tile appears here once
     ("building", [T.WOOD_FLOOR, T.STONE_FLOOR, T.CAVE_FLOOR, T.WALL, T.STONE_WALL, T.CAVE_WALL, T.DOOR,
                   T.FENCE, T.BATTLEMENT, T.TORCH, T.SIGN, T.STAIRS_DOWN, T.STAIRS_UP]),
     ("furniture", [T.BED, T.TABLE, T.HEARTH, T.BARREL, T.WELL, T.STALL, T.OVEN, T.COUNTER, T.HOOKS,
-                   T.WOODPILE, T.TROUGH]),
+                   T.WOODPILE, T.TROUGH, T.BEDROLL, T.RACK]),
     ("fields", [T.CROPS, T.WHEAT, T.RYE, T.RICE, T.MILLET]),
 ]
 GALLERY_TOP = 100
@@ -54,8 +59,11 @@ SWATCHES = [T.DEEP_WATER, T.WATER, T.SAND, T.TALL_GRASS, T.DRY_GRASS, T.DIRT, T.
             T.SCREE, T.REEDS, T.BUSH, T.BOULDER, T.ROCK, T.RUBBLE, T.CAVE_FLOOR]
 WOODS = [T.TREE, T.PINE, T.JUNGLE_TREE]
 TRADE_PROPS = {"baker": T.OVEN, "butcher": T.HOOKS, "innkeeper": T.COUNTER, "farmer": T.WHEAT,
-               "fisherman": T.WATER, "lumberjack": T.WOODPILE, "barkeeper": T.BARREL}
-ITEM_ROW = GALLERY_TOP + len(GALLERY) * ROW     # every item, lying ready to pick up
+               "fisherman": T.WATER, "lumberjack": T.WOODPILE, "barkeeper": T.BARREL, "shopkeeper": T.RACK}
+ITEM_ROW = GALLERY_TOP + len(GALLERY) * ROW     # every item, lying ready to pick up, in rows
+ITEMS_PER_ROW = 16
+WILDS = (8, 100, 64, 34)        # the fenced wood: x, y, width, height
+CAVE = (8, 142, 64, 40)         # the goblin cave
 HILL = (140, 48, 34, 34, 14)                    # centre, radii and top level of the hill
 DIG_PATCH = (26, 18, 18, 10)                    # the dirt swatch: dig here
 PEN_W, PEN_H = 9, 5
@@ -77,7 +85,8 @@ def build_arena(world, region: tuple[int, int]) -> Level:
     t[plaza] = T.FLAGSTONES
     gallery(t)
     for i, kind in enumerate(items.KINDS):
-        items.drop(level, SPAWN[0] - len(items.KINDS) * SLOT // 2 + SLOT // 2 + i * SLOT, ITEM_ROW, kind)
+        col, row = i % ITEMS_PER_ROW, i // ITEMS_PER_ROW
+        items.drop(level, SPAWN[0] - ITEMS_PER_ROW * SLOT // 2 + SLOT // 2 + col * SLOT, ITEM_ROW + 2 * row, kind)
     x0, y0, w, h = DIG_PATCH
     for x in range(x0, x0 + w):
         for y in range(y0, y0 + h):
@@ -85,6 +94,8 @@ def build_arena(world, region: tuple[int, int]) -> Level:
                 level.buried[(x, y)] = items.treasure(rng)
     level.elev = hill(xs, ys)
     pens(level, rng)
+    wilds(level, rng)
+    goblin_cave(level, rng)
     settlement(level, world, rng, Site("town", "Testbury", *region), (4, 196), (96, 48), Land(0, 12.0, 0.5, -0.5))
     settlement(level, world, rng, Site("village", "Little Testing", *region), (102, 198), (80, 44),
                Land(5, 12.0, 0.5, -0.5))
@@ -107,6 +118,83 @@ def hill(xs, ys) -> np.ndarray:
     steep = np.where(ys < cy, 1.6, 1.0)
     h = np.clip(top * (1 - d) * steep, 0, top).astype(np.int16)
     return elevation.relax(h)
+
+
+def wilds(level: Level, rng: random.Random) -> None:
+    """A fenced wood with a pack of three wolves and the small game they hunt."""
+    t = level.tiles
+    x0, y0, w, h = WILDS
+    t[x0: x0 + w, y0: y0 + h] = T.FENCE
+    inside = t[x0 + 1: x0 + w - 1, y0 + 1: y0 + h - 1]
+    inside[:] = T.GRASS
+    r = np.array([[rng.random() for _ in range(h - 2)] for _ in range(w - 2)])
+    inside[r < 0.15] = T.TALL_GRASS
+    inside[r > 0.86] = T.TREE
+    trees.thin(inside, r, np.full(inside.shape, T.GRASS, np.uint8))
+    middle = (x0 + w // 2, y0 + h // 2)
+    taken = wild.taken_on(level)
+    for c in wild.add_pack(level, rng, middle, 14, taken, size=3):
+        c.hunger = 55.0
+    wild.add_game(level, rng, "rabbit", 5, middle, 14, taken)
+    wild.add_game(level, rng, "squirrel", 4, middle, 14, taken)
+    wild.add_game(level, rng, "bird", 4, middle, 14, taken)
+
+
+def goblin_cave(level: Level, rng: random.Random) -> None:
+    """A walled cave with a door: guards inside it, a patrol, a hunter and a cook at their fire,
+    bedrolls, food by the fire and a barrel of loot, rats, and bats asleep in the far corner."""
+    t = level.tiles
+    x0, y0, w, h = CAVE
+    t[x0: x0 + w, y0: y0 + h] = T.CAVE_WALL
+    xs, ys = np.ogrid[: w - 2, : h - 2]
+    r = np.array([[rng.random() for _ in range(h - 2)] for _ in range(w - 2)])
+    t[x0 + 1: x0 + w - 1, y0 + 1: y0 + h - 1] = np.where(r < 0.04, T.CAVE_WALL, T.CAVE_FLOOR)
+    door = (x0 + w - 1, y0 + 4)
+    t[door] = T.DOOR
+    t[door[0] - 1, door[1]] = T.CAVE_FLOOR
+    t[door[0] + 1, door[1]] = T.PATH
+    hearth = (x0 + 14, y0 + h - 10)
+    t[hearth[0] - 4: hearth[0] + 5, hearth[1] - 3: hearth[1] + 4] = T.CAVE_FLOOR
+    t[hearth] = T.HEARTH
+    store = (hearth[0] + 1, hearth[1])
+    beds = [(hearth[0] + dx, hearth[1] + dy) for dx, dy in ((-3, -2), (-3, 2), (3, -2), (3, 2), (0, 3))]
+    for b in beds:
+        t[b] = T.BEDROLL
+    barrel = (hearth[0] - 3, hearth[1])
+    t[barrel] = T.BARREL
+    bag = items.Inventory()
+    bag.add("coin", 9)
+    bag.add("bone charm")
+    bag.add("glass marble")
+    bag.add("dagger")
+    level.stores[barrel] = bag
+    items.drop(level, *store, "roast meat")
+    items.drop(level, *store, "rat carcass")
+    level.camp = {"hearth": hearth, "store": store, "beds": beds, "barrel": barrel}
+    roost = (x0 + w - 6, y0 + h - 4)
+    t[roost[0] - 3: roost[0] + 3, roost[1] - 2: roost[1] + 2] = T.CAVE_FLOOR
+    t[roost[0] - 5, roost[1]] = T.WATER                 # a pool the bats fly over
+    gang = [wild.Creature("goblin", door[0] - 2, door[1] - 1, home=(door[0] - 2, door[1] - 1), role="guard",
+                          pack=99, sleep_hour=21.0),
+            wild.Creature("goblin", door[0] - 2, door[1] + 1, home=(door[0] - 2, door[1] + 1), role="guard",
+                          pack=99, sleep_hour=9.0),
+            wild.Creature("goblin", x0 + 30, y0 + 12, home=(x0 + 30, y0 + 12), role="patrol", pack=99,
+                          route=[(x0 + 30, y0 + 12), (x0 + 50, y0 + 20), (x0 + 30, y0 + 30), (x0 + 10, y0 + 15)],
+                          sleep_hour=2.0),
+            wild.Creature("goblin", hearth[0] + 2, hearth[1] + 1, home=store, role="hunter", pack=99,
+                          bed=beds[0], sleep_hour=1.0, reach=25),
+            wild.Creature("goblin", hearth[0] + 1, hearth[1] + 1, home=store, role="cook", pack=99,
+                          bed=beds[1], sleep_hour=0.0)]
+    for g in gang:
+        g.carry = ["coin", "coin", rng.choice(items.TRINKETS)]
+        t[g.x, g.y] = T.CAVE_FLOOR if t[g.x, g.y] == T.CAVE_WALL else t[g.x, g.y]
+    level.creatures += gang
+    taken = wild.taken_on(level)
+    for i in range(6):
+        spot = (roost[0] - 2 + i % 3, roost[1] - 1 + i // 3)
+        level.creatures.append(wild.Creature("bat", *spot, home=roost, reach=8, asleep=True, pack=1000))
+        taken.add(spot)
+    wild.add_game(level, rng, "rat", 4, (x0 + 40, y0 + 25), 10, taken)
 
 
 def swatches(t: np.ndarray, rng: random.Random) -> None:

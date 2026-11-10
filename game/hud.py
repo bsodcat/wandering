@@ -10,7 +10,9 @@ import numpy as np
 import tcod
 
 from . import biomes as B
+from . import combat
 from . import items
+from . import sickness
 from . import tiles as T
 from . import trees
 from .climate import clock_text, date_text, describe_wind, time_of_day
@@ -97,6 +99,10 @@ def conditions(e: Engine) -> list[tuple[str, tuple]]:
         text = status(p)
         if text and text not in ("Fresh", "Dry"):
             out.append((text, colour))
+    ill = sickness.status(p)
+    if ill:
+        out.append((ill + " (wolf fever)" if ill != "Recovering" else "Recovering from fever",
+                    (230, 150, 60) if ill != "Recovering" else (200, 200, 120)))
     return out or [("Fine", (110, 200, 110))]
 
 
@@ -127,6 +133,9 @@ def draw_stats(console, e: Engine) -> None:
     if e.level is not None and e.level.elev.max() > e.level.elev.min():
         w.line(f"Height    {int(e.level.elev[e.lx, e.ly]) * LEVEL_M:4.0f} m", DIM)
     w.line(f"Coins     {p.inventory.count('coin'):5d}", (240, 210, 90))
+    held, weapon = combat.weapon_of(p)
+    w.line(f"Attack  {weapon.low:>3}-{weapon.high:<3}", DIM)
+    w.line(f"Armour    {combat.protection(p):5d}", DIM)
     w.gap()
     w.line("Condition", TITLE)
     for text, colour in conditions(e):
@@ -181,8 +190,9 @@ def draw_info(console, e: Engine, look: list[str]) -> None:
         keys = ("arrows/numpad/wasd  go", "> <      stairs down/up", "<        (no stairs) map",
                 f"v        {'ground' if e.treetops else 'treetops'} view", ". or 5   wait an hour",
                 "z        rest / sleep", "g x      pick up, dig", "i        inventory",
+                "e        use menu", "bump     fight",
                 f"o        {'normal' if e.relief else 'relief'} view", "m        reveal level")
-    keys += ("mouse    look, R: walk", "Tab      panel tabs", "c        stats panel", "F11      fullscreen", "Esc      menu, options")
+    keys += ("mouse    L use, R walk", "Tab      panel tabs", "c        stats panel", "F11      fullscreen", "Esc      menu, options")
     w.y = max(w.y + 1, console.height - len(keys) - 1)
     for text in keys + (f"Seed {wd.seed}",):
         w.line(text, DIM)
@@ -330,12 +340,15 @@ def draw_inventory(console, e: Engine) -> None:
     things = [k for k in bag if k != "coin"]
     if not things:
         w.line("Nothing else.", DIM)
+    held, _ = combat.weapon_of(e.player)
+    on = combat.worn(e.player).values()
     for kind in things:
         k = items.KINDS[kind]
         n = bag.count(kind)
         console.print(w.x, w.y, k.char, fg=k.colour)
         w.x += 2
-        w.line(k.name if n == 1 else f"{k.plural} x{n}")
+        tag = " (in hand)" if kind == held else " (worn)" if kind in on else ""
+        w.line((k.name if n == 1 else f"{k.plural} x{n}") + tag, TITLE if tag else TEXT)
         w.x -= 2
         for part in textwrap.wrap(k.note, w.width - 2):
             w.line(f"  {part}", DIM)
@@ -343,8 +356,8 @@ def draw_inventory(console, e: Engine) -> None:
         w.gap()
         w.line("Your room's paid for", DIM)
         w.line(f"until {clock_text(e.room_until)}", DIM)
-    keys = ("g        pick up", "x        dig (shovel)", "walk into a tree with", "an axe to fell it",
-            "walk into a trader", "to trade with them")
+    keys = ("g        pick up", "x        dig (shovel)", "e        eat, wield, wear",
+            "walk into a tree with", "an axe to fell it", "walk into a trader", "to trade with them")
     w.y = max(w.y + 1, console.height - len(keys) - 1)
     for text in keys:
         w.line(text, DIM)
@@ -393,7 +406,7 @@ MENU_HINTS = {
 
 
 def draw_shop(console: tcod.console.Console, e: Engine) -> None:
-    """A trader's deals, over the dimmed game."""
+    """A shop, the use menu or a barrel, over the dimmed game."""
     shop = e.shop
     if shop is None:
         return
@@ -402,25 +415,29 @@ def draw_shop(console: tcod.console.Console, e: Engine) -> None:
     console.rgb["bg"] = (console.rgb["bg"] * 0.4).astype(np.uint8)
     x, y, w, h = shop.box()
     console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
-    title = f" {shop.title} "
+    title = f" {shop.title[: w - 4]} "
     console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
     for i, line in enumerate(textwrap.wrap(shop.greeting, w - 4)[:2]):
         console.print(x + 2, y + 1 + i, line, fg=DIM, bg=PANEL_BG)
-    bag = e.player.inventory
-    for i, label in enumerate(shop.labels()):
+    labels = shop.labels()
+    rows = shop.visible_rows()
+    for i in rows:
         ry = shop.row_y(i)
         picked = i == shop.cursor
         if picked:
             console.draw_rect(x + 1, ry, w - 2, 1, ord(" "), bg=HEADER_BG)
         colour = TAB_ON if picked else TEXT
-        if i < len(shop.deals) and not shop.times(shop.deals[i], bag):
+        if shop.dim(i, e):
             colour = (120, 110, 90) if picked else DIM
-        console.print(x + 3, ry, label[: w - 6], fg=colour)
+        console.print(x + 3, ry, labels[i][: w - 6], fg=colour)
+    if rows.start > 0:
+        console.print(x + w - 3, shop.row_y(rows.start), "▲", fg=DIM)
+    if rows.stop < len(labels):
+        console.print(x + w - 3, shop.row_y(rows.stop - 1), "▼", fg=DIM)
     said = shop.said[-1] if shop.said else ""
     console.print(x + 2, y + h - 4, said[: w - 4], fg=TEXT, bg=PANEL_BG)
-    have = f"Coins {bag.count('coin')}" + (f"   Logs {bag.count('log')}" if bag.count("log") else "")
-    console.print(x + 2, y + h - 3, have, fg=(240, 210, 90), bg=PANEL_BG)
-    hint = "Up/Down choose, Enter trades, Esc leaves"
+    console.print(x + 2, y + h - 3, shop.footer(e)[: w - 4], fg=(240, 210, 90), bg=PANEL_BG)
+    hint = shop.hint
     console.print(x + (w - len(hint)) // 2, y + h - 2, hint, fg=DIM, bg=PANEL_BG)
 
 

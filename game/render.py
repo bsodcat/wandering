@@ -419,7 +419,7 @@ def draw_actors(console, e: Engine, ox: int, oy: int, canopy_shown) -> None:
     the treetops (seen from above) is hidden by the leaves."""
     level = e.level
     strength, _ = firelight(level)
-    for a in level.actors:
+    for a in level.actors + level.creatures:
         if not (level.in_bounds(a.x, a.y) and e.local_visible[a.x, a.y]):
             continue
         sx, sy = a.x - ox, a.y - oy
@@ -432,6 +432,8 @@ def draw_actors(console, e: Engine, ox: int, oy: int, canopy_shown) -> None:
         light = 1.0 if level.underground else (max(0.5, e.now.light * 0.8) if T.ROOF[level.tiles[a.x, a.y]]
                                                else e.now.light)
         bright = min(1.0, max(0.4, light, float(strength[a.x, a.y]) * 1.2))
+        if getattr(a, "asleep", False):
+            bright *= 0.6
         console.rgb["ch"][sx, sy] = ord(a.char)
         console.rgb["fg"][sx, sy] = tuple(int(c * bright) for c in a.colour)
 

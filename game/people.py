@@ -2,8 +2,9 @@
 
 Each settlement is populated when its map is built:
 
-- towns:    a baker, a butcher, an innkeeper, farmers for the gardens, and a fisherman and a
-            lumberjack if there's water to fish and woods to cut
+- towns:    a baker, a butcher, an innkeeper, a shopkeeper (weapons and armour, at the
+            armourer's), farmers for the gardens, and a fisherman and a lumberjack if there's
+            water to fish and woods to cut
 - villages: farmers for the fields, and a fisherman and a lumberjack in the same way
 - inns:     an innkeeper, and a barkeeper who lets the rooms upstairs for the night
 - animals:  a herd in each pasture (what suits the land, see farming.py), and hens about
@@ -21,6 +22,7 @@ Everyone lives in a house (the innkeeper at the inn) and keeps hours:
     farmer       06:00-18:00
     lumberjack   07:00-17:00
     butcher      07:00-16:00
+    shopkeeper   08:00-18:00  sells weapons and armour, buys trinkets
     innkeeper    07:00-21:00  keeping the inn; sleeps there
     barkeeper    10:00-24:00  behind the bar, letting rooms; sleeps at the inn
 
@@ -82,6 +84,9 @@ JOBS = {
     "innkeeper": Job((240, 190, 80), 7, 21, "keeping the inn",
                      ("Welcome to {inn}! Warm fire, soft beds.", "Rooms are upstairs; see the barkeeper.",
                       "Travellers bring the best stories.", "Wipe your boots, please.")),
+    "shopkeeper": Job((190, 195, 215), 8, 18, "minding the shop",
+                      ("Good steel, fair prices.", "Wolves about? You'll want a spear.",
+                       "Dig anything up, bring it here. I pay fair.", "Mail's dear, but so's your hide.")),
     "barkeeper": Job((220, 150, 200), 10, 24, "serving at the bar",
                      ("What'll it be?", "A bed upstairs? That's {price} coins the night.",
                       "Mind the cellar steps.", "Quiet tonight. Too quiet.")),
@@ -137,7 +142,7 @@ class Actor:
 def populate(level, site, rng: random.Random) -> None:
     """The people who live and work here, and their animals."""
     t = level.tiles
-    buildings = {b.kind: b for b in level.buildings if b.kind in ("inn", "bakery", "butcher")}
+    buildings = {b.kind: b for b in level.buildings if b.kind in ("inn", "bakery", "butcher", "armoury")}
     houses = [b for b in level.buildings if b.kind == "house"]
     rng.shuffle(houses)
     fields_ = [p for p in level.places if p.kind == "field"]
@@ -145,7 +150,7 @@ def populate(level, site, rng: random.Random) -> None:
     camp = next((p for p in level.places if p.kind == "camp"), None)
     inn = buildings.get("inn")
     if site.kind == "town":
-        jobs = ["baker", "butcher", "innkeeper", "barkeeper"] + ["farmer"] * min(2, len(fields_))
+        jobs = ["baker", "butcher", "innkeeper", "barkeeper", "shopkeeper"] + ["farmer"] * min(2, len(fields_))
     elif site.kind == "village":
         jobs = ["farmer"] * min(3, max(1, len(fields_) - 1))
     else:
@@ -229,14 +234,15 @@ def workplace(level, job: str, i: int, fields_, water, camp, buildings) -> list:
         return water[0].tiles if water else []
     if job == "lumberjack":
         return camp.tiles if camp else []
-    kind = {"baker": "bakery", "butcher": "butcher", "innkeeper": "inn", "barkeeper": "inn"}[job]
+    kind = {"baker": "bakery", "butcher": "butcher", "innkeeper": "inn", "barkeeper": "inn",
+            "shopkeeper": "armoury"}[job]
     b = buildings.get(kind)
     if b is None:
         return []
     floor = b.floor(t)
     if job == "innkeeper":
         return [c for c in floor if t[c] not in (T.STAIRS_UP, T.STAIRS_DOWN)]
-    near_counter = [c for c in floor if any(t[c[0] + dx, c[1] + dy] in (T.COUNTER, T.OVEN)
+    near_counter = [c for c in floor if any(t[c[0] + dx, c[1] + dy] in (T.COUNTER, T.OVEN, T.RACK)
                                             for dx in (-1, 0, 1) for dy in (-1, 0, 1))]
     return near_counter or floor
 

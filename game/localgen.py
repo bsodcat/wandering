@@ -35,6 +35,7 @@ from . import people
 from . import structures
 from . import tiles as T
 from . import trees
+from . import wild
 from .level import Level
 
 LOCAL_W, LOCAL_H = 96, 48
@@ -243,18 +244,21 @@ def generate_region(world, x: int, y: int) -> Level:
     trees.keep_clear(level.canopy, level.boughs, level.tiles, level.exits)
     if site is not None:
         people.populate(level, site, random.Random(world.region_seed(x, y) + 1))
-    bury(level, random.Random(world.region_seed(x, y) + 2), BURIED.get(site.kind if site else None, BURIED[None]))
+    bury(level, random.Random(world.region_seed(x, y) + 2), BURIED.get(site.kind if site else None, BURIED[None]),
+         town=site is not None and site.kind == "town")
+    wild.populate_region(level, world, x, y, site, random.Random(world.region_seed(x, y) + 3))
     return level
 
 
 BURIED = {None: 1 / 150, "ruins": 1 / 50, "town": 1 / 250, "village": 1 / 200}   # share of open ground with something under it
 
 
-def bury(level: Level, rng: random.Random, share: float) -> None:
-    """Things lost and buried over the years, under open ground you could dig."""
+def bury(level: Level, rng: random.Random, share: float, town: bool = False) -> None:
+    """Things lost and buried over the years, under open ground you could dig (silver and gold
+    only under a town)."""
     spots = list(zip(*np.nonzero(T.DIGGABLE[level.tiles])))
     for x, y in rng.sample(spots, min(len(spots), round(len(spots) * share))):
-        level.buried[(int(x), int(y))] = items.treasure(rng)
+        level.buried[(int(x), int(y))] = items.treasure(rng, town)
 
 
 def make_level(world, key: tuple) -> Level:
@@ -263,7 +267,11 @@ def make_level(world, key: tuple) -> Level:
     if kind == "region":
         return generate_region(world, x, y)
     site = world.site_at.get((x, y))
-    return structures.sublevel(key, site, random.Random(world.region_seed(x, y) * 31 + key[3]))
+    level = structures.sublevel(key, site, random.Random(world.region_seed(x, y) * 31 + key[3]))
+    if kind == "cave" and site is not None:
+        wild.populate_cave(level, site, key[3], structures.cave_depth(site.name),
+                           random.Random(world.region_seed(x, y) * 37 + key[3]))
+    return level
 
 
 def node_local(world, x: int, y: int) -> tuple[float, float]:
