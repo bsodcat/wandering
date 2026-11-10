@@ -11,6 +11,9 @@ from the world map all lead into the middle of a settlement, so places grow outw
            the climate, a pasture or two, docks on the coast, a lumber camp in wooded country
 - inn:     a large named inn by the road, a paddock with horses and a well
 
+Every inn, in a town or by the road, has stairs up to a floor of guest rooms (a corridor, a
+bed in each room; the barkeeper lets them for the night) and down to a cellar of barrels.
+
 Every building is kept on the level (kind, name, box, door), and so is every place someone
 works or something grazes (fields, pastures, the pier, a fishing spot on the shore, the lumber
 camp): game/people.py puts the townsfolk and their animals there.
@@ -392,7 +395,19 @@ def inn_building(level: Level, rng: random.Random, ring, sizes=((13, 15), (7, 8)
         if all(abs(c[0] - p[0]) > 1 or abs(c[1] - p[1]) > 1 for p in placed):
             t[c] = T.TABLE
             placed.append(c)
+    inn_stairs(level, x0, y0, x1, y1, door)
     return outside
+
+
+def inn_stairs(level: Level, x0: int, y0: int, x1: int, y1: int, door) -> None:
+    """Stairs up to the guest rooms and down to the cellar, in the inn's corners away from the
+    door (over a bed or a keg if they must)."""
+    t = level.tiles
+    corners = [(x0 + 1, y0 + 1), (x1 - 1, y0 + 1), (x0 + 1, y1 - 1), (x1 - 1, y1 - 1)]
+    corners.sort(key=lambda c: -((c[0] - door[0]) ** 2 + (2 * (c[1] - door[1])) ** 2))
+    for (x, y), way in zip(corners[:2], (("inn_up", T.STAIRS_UP), ("cellar", T.STAIRS_DOWN))):
+        t[x, y] = way[1]
+        level.exits[(x, y)] = (way[0], *level.region, 1)
 
 
 def shop(level: Level, rng: random.Random, kind: str, name: str, ring):
@@ -653,5 +668,47 @@ def tower_floor(key: tuple, site, rng: random.Random) -> Level:
     return Level(key, name, tiles, exits, indoor_air=14.0, lookout=roof)
 
 
+INN_ROOMS = 4               # guest rooms along each side of the corridor upstairs
+ROOM_W = 5
+
+
+def inn_upstairs(key: tuple, site, rng: random.Random) -> Level:
+    """A corridor with guest rooms off both sides, each with a bed, and the stairs down at one
+    end. (game/engine.py names it after the inn.)"""
+    w, h = 2 + INN_ROOMS * ROOM_W, 11
+    tiles = np.full((w, h), T.WALL, np.uint8)
+    cy = h // 2
+    tiles[1: w - 1, cy] = T.WOOD_FLOOR
+    for i in range(INN_ROOMS):
+        x0 = 1 + i * ROOM_W
+        for ya, yb, door_y in ((1, cy - 1, cy - 1), (cy + 2, h - 1, cy + 1)):
+            tiles[x0: x0 + ROOM_W - 1, ya: yb] = T.WOOD_FLOOR
+            tiles[x0 + 1, door_y] = T.DOOR
+            far = ya if door_y == cy - 1 else yb - 1
+            tiles[x0 + ROOM_W - 2, far] = T.BED
+            tiles[x0, far] = rng.choice([T.TABLE, T.BARREL, T.WOOD_FLOOR])
+    tiles[w - 2, cy] = T.HEARTH
+    tiles[1, cy] = T.STAIRS_DOWN
+    name = f"Upstairs at {site.name}" if site is not None else "Upstairs at the inn"
+    return Level(key, name, tiles, {(1, cy): parent(key)}, indoor_air=19.0)
+
+
+def inn_cellar(key: tuple, site, rng: random.Random) -> Level:
+    """A low stone cellar of barrels and kegs under the inn."""
+    w, h = 20, 9
+    tiles = np.full((w, h), T.STONE_WALL, np.uint8)
+    tiles[1: w - 1, 1: h - 1] = T.STONE_FLOOR
+    for x in range(2, w - 2):
+        for y in (1, h - 2):
+            if rng.random() < 0.7:
+                tiles[x, y] = T.BARREL
+    for x in range(4, w - 4, 4):
+        tiles[x, h // 2] = T.BARREL
+    tiles[1, h // 2] = T.STAIRS_UP
+    name = f"The cellar at {site.name}" if site is not None else "The inn's cellar"
+    return Level(key, name, tiles, {(1, h // 2): parent(key)}, underground=True, indoor_air=12.0)
+
+
 def sublevel(key: tuple, site, rng: random.Random) -> Level:
-    return {"cave": cave_level, "crypt": crypt_level, "tower": tower_floor}[key[0]](key, site, rng)
+    return {"cave": cave_level, "crypt": crypt_level, "tower": tower_floor, "inn_up": inn_upstairs,
+            "cellar": inn_cellar}[key[0]](key, site, rng)

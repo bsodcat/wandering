@@ -12,6 +12,11 @@ your lantern lights them, fading with distance. Hearths and torches burn with a 
 light of their own, and water moves: rivers run downstream and the sea rolls. Treetops are a
 layer above the ground: seen from above they hide what's under them, except right around you, where you see the trunks
 and the shaded ground beneath (v shows the ground everywhere).
+
+Height: ground above you is drawn a little brighter and ground below you a little darker, and
+the foot of a rise lies in its shadow. o on a local map shows the relief instead: each tile's
+height (its last digit) on a colour from low to high. Things lying on the ground show over
+the tile they're on.
 """
 from __future__ import annotations
 
@@ -21,12 +26,13 @@ import numpy as np
 import tcod
 
 from . import biomes as B
+from . import items
 from . import tiles as T
 from . import trees
 from .farming import CROP_LOOKS
 from .light import firelight, flame, flicker
 from .engine import OVERLAYS, Engine
-from .hud import draw_hud, draw_menu
+from .hud import draw_hud, draw_menu, draw_shop
 from .ui import SCREEN_H, SCREEN_W
 from .worldgen import SITE_KINDS
 
@@ -258,6 +264,8 @@ def draw_map(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -> 
 
 SNOW_FG, SNOW_BG = np.array((235, 240, 250)), np.array((170, 178, 195))
 LANTERN_GLOW = 5   # tiles your lantern brightens on a dark night outdoors
+RELIEF = [(0.0, (30, 70, 40)), (0.35, (95, 120, 55)), (0.65, (130, 100, 65)), (0.85, (150, 140, 130)),
+          (1.0, (225, 225, 235))]
 CUTAWAY = 4.3      # how far around you (in columns) you see under the treetops
 
 # Leaves seen from above: (glyph, second glyph, how often the first, fg, bg)
@@ -308,7 +316,20 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
             here = t == tile
             if look is not None and here.any():
                 ch[here], fg[here], bg[here] = ord(look[0]), look[1], look[2]
+    elev = level.elev[view].astype(np.float32)
+    if level.elev.max() > level.elev.min():       # the lie of the land
+        rel = elev - float(level.elev[e.lx, e.ly])
+        shade = np.clip(1 + 0.05 * rel, 0.6, 1.35)[..., None]
+        north = np.pad(elev, ((0, 0), (1, 0)), mode="edge")[:, :-1]
+        foot = np.clip(1 - 0.12 * (north - elev), 0.7, 1)[..., None]     # in the shadow of a rise
+        fg, bg = fg * shade, bg * shade * foot
+    if e.relief:
+        lo, hi = float(level.elev.min()), float(level.elev.max())
+        bg = ramp((elev - lo) / max(1.0, hi - lo), RELIEF)
+        fg = np.full_like(fg, 235)
+        ch = (ord("0") + level.elev[view] % 10).astype(ch.dtype)
     base_fg, base_bg = fg, bg                     # what's remembered once out of sight
+    lit_from = fg                                 # to light what lies on the ground the same way
     visible = e.local_visible[view]
     seen = level.explored[view]
     xs = np.arange(cx, cx + vw)[:, None] + np.zeros((1, vh), int)
@@ -324,6 +345,7 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
     wet = np.isin(t, WATER_TILES) & visible
     animate_water(ch, fg, bg, wet, waves(gx, gy, *current, speed, seconds), gx, gy, seconds,
                   glints=not level.underground and c.light > 0.45 and c.precip < 0.15, deep=t == T.DEEP_WATER)
+    shown = None
     if level.underground:
         light = np.clip(1.15 - dist / (2 * e.sight_radius() + 2), 0.12, 1)[..., None]
         fg, bg = fg * light, bg * light
@@ -370,6 +392,14 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
     else:   # firelight shows most in the dark; under a roof there's always some to see by
         dark = np.where(sky, 1 - c.light, max(0.35, 1 - max(0.5, c.light * 0.8)))
     burn(ch, fg, bg, t, visible, strength[view], phase[view], dark, base_fg, base_bg, seconds)
+    for (ix, iy), pile in level.items.items():   # things lying about, lit like the ground under them
+        vx, vy = ix - cx, iy - cy
+        if pile and 0 <= vx < vw and 0 <= vy < vh and not (shown is not None and shown[vx, vy]):
+            kind = items.KINDS[pile[-1]]
+            lit = float(np.clip(fg[vx, vy].sum() / max(1.0, float(lit_from[vx, vy].sum())), 0.25, 1.3))
+            ch[vx, vy] = ord(kind.char)
+            fg[vx, vy] = np.array(kind.colour) * lit
+            base_fg[vx, vy] = kind.colour
     memory = seen & ~visible
     fg[memory] = base_fg[memory] * 0.35 + base_fg[memory].mean(axis=-1, keepdims=True) * 0.15 + 12
     bg[memory] = base_bg[memory] * 0.18 + 5
@@ -423,4 +453,5 @@ def draw(console: tcod.console.Console, e: Engine, seconds: float | None = None)
     if not e.player.alive:
         text = f" You {e.player.cause}. Esc quits. "
         console.print(max(0, (console.width - len(text)) // 2), console.height // 2 - 3, text, fg=(255, 255, 255), bg=(120, 20, 20))
+    draw_shop(console, e)
     draw_menu(console, e.menu)

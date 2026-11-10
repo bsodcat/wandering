@@ -83,7 +83,7 @@ class BuildingTests(unittest.TestCase):
     def test_roadside_inns_get_the_same_inn_and_horses(self):
         for s, lvl in site_levels("inn"):
             self.assertTrue(any(b.kind == "inn" for b in lvl.buildings), s.name)
-            self.assertEqual({a.kind for a in lvl.actors}, {"innkeeper", "horse"})
+            self.assertEqual({a.kind for a in lvl.actors}, {"innkeeper", "barkeeper", "horse"})
 
     def test_pastures_are_fenced_with_a_trough(self):
         for s, lvl in site_levels("village"):
@@ -138,7 +138,7 @@ class PeopleTests(unittest.TestCase):
             self.assertEqual(len(spots), len(set(spots)))
             for a in lvl.actors:
                 self.assertTrue(T.WALK[lvl.tiles[a.x, a.y]], (a.kind, a.x, a.y))
-                if a.animal and a.kind != "hen":
+                if a.animal and a.kind not in ("hen", "dog", "cat"):     # pets wander, and follow you
                     self.assertIn((a.x, a.y), a.work)
         moved = sum((a.x, a.y) != before[id(a)] for a in lvl.actors if not a.animal)
         self.assertGreater(moved, 2)

@@ -79,7 +79,10 @@ ANIMALS = {
     "reindeer": Animal("R", (175, 135, 95), "snorts", "reindeer", 2.5),
     "horse": Animal("H", (170, 115, 75), "snorts", "horses", 2.0),
     "hen": Animal("h", (240, 225, 185), "clucks", "hens", 1.2),
+    "dog": Animal("d", (200, 150, 90), "barks", "dogs", 0.9),
+    "cat": Animal("c", (230, 170, 110), "meows", "cats", 1.3),
 }
+PETS = ("dog", "cat")         # a town's pet: wanders the town and follows you about
 
 
 # ----------------------------------------------------------------- the year in the fields

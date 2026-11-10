@@ -3,9 +3,12 @@
     north-west   a swatch of every kind of ground, and a broadleaf, a pine and a jungle wood
     middle       where you start: a paved plaza
     north        the gallery: every tile in the game on its own flagstone, a row per kind
-                 (ground, trees, ways, building, furniture and trades, fields)
+                 (ground, trees, ways, building, furniture and trades, fields), and a row of
+                 every item lying ready to pick up (an axe and a shovel among them)
+    north-east   a hill, terraced up to 14 levels, for climbing and for seeing over
+    north-west   in the dirt patch, something buried under almost every other tile
     south        pens with one of every townsfolk (each with a bit of their trade) and one of
-                 every animal
+                 every animal, the dog and the cat among them
     east         a river with a bridge, and a lake with a beach and a pier
     far south    a town (inn, bakery, butcher's, houses, gardens, a pasture, a lumber camp) and
                  a village (wheat, sheep), built and peopled the same way as in the world
@@ -18,11 +21,13 @@ import random
 
 import numpy as np
 
+from . import elevation
+from . import items
 from . import people
 from . import structures
 from . import tiles as T
 from . import trees
-from .farming import ANIMALS, Land
+from .farming import ANIMALS, PETS, Land
 from .level import Level, Place
 from .worldgen import Site
 
@@ -32,7 +37,7 @@ SEED = 4242                    # the arena is the same every time
 
 GALLERY = [   # (row name, tiles) - every tile appears here once
     ("ground", [T.DEEP_WATER, T.WATER, T.SAND, T.GRASS, T.TALL_GRASS, T.DRY_GRASS, T.DIRT, T.MUD, T.SNOW,
-                T.ICE, T.SCREE, T.REEDS, T.BUSH, T.BOULDER, T.ROCK]),
+                T.ICE, T.SCREE, T.REEDS, T.BUSH, T.BOULDER, T.ROCK, T.DUG]),
     ("trees", [T.TREE, T.PINE, T.JUNGLE_TREE, T.STUMP]),
     ("ways", [T.ROAD, T.STREET, T.PATH, T.BRIDGE, T.DOCK, T.FLAGSTONES, T.RUBBLE]),
     ("building", [T.WOOD_FLOOR, T.STONE_FLOOR, T.CAVE_FLOOR, T.WALL, T.STONE_WALL, T.CAVE_WALL, T.DOOR,
@@ -49,7 +54,10 @@ SWATCHES = [T.DEEP_WATER, T.WATER, T.SAND, T.TALL_GRASS, T.DRY_GRASS, T.DIRT, T.
             T.SCREE, T.REEDS, T.BUSH, T.BOULDER, T.ROCK, T.RUBBLE, T.CAVE_FLOOR]
 WOODS = [T.TREE, T.PINE, T.JUNGLE_TREE]
 TRADE_PROPS = {"baker": T.OVEN, "butcher": T.HOOKS, "innkeeper": T.COUNTER, "farmer": T.WHEAT,
-               "fisherman": T.WATER, "lumberjack": T.WOODPILE}
+               "fisherman": T.WATER, "lumberjack": T.WOODPILE, "barkeeper": T.BARREL}
+ITEM_ROW = GALLERY_TOP + len(GALLERY) * ROW     # every item, lying ready to pick up
+HILL = (140, 48, 34, 34, 14)                    # centre, radii and top level of the hill
+DIG_PATCH = (26, 18, 18, 10)                    # the dirt swatch: dig here
 PEN_W, PEN_H = 9, 5
 RIVER_X = 186                  # the river's west bank
 LAKE = (228, 128, 20, 34)      # centre and radii
@@ -68,6 +76,14 @@ def build_arena(world, region: tuple[int, int]) -> Level:
     plaza = ((xs - SPAWN[0]) / 11) ** 2 + ((ys - SPAWN[1]) / 5) ** 2 <= 1
     t[plaza] = T.FLAGSTONES
     gallery(t)
+    for i, kind in enumerate(items.KINDS):
+        items.drop(level, SPAWN[0] - len(items.KINDS) * SLOT // 2 + SLOT // 2 + i * SLOT, ITEM_ROW, kind)
+    x0, y0, w, h = DIG_PATCH
+    for x in range(x0, x0 + w):
+        for y in range(y0, y0 + h):
+            if (x + y) % 2 == 0:
+                level.buried[(x, y)] = items.treasure(rng)
+    level.elev = hill(xs, ys)
     pens(level, rng)
     settlement(level, world, rng, Site("town", "Testbury", *region), (4, 196), (96, 48), Land(0, 12.0, 0.5, -0.5))
     settlement(level, world, rng, Site("village", "Little Testing", *region), (102, 198), (80, 44),
@@ -82,6 +98,15 @@ def build_arena(world, region: tuple[int, int]) -> Level:
     trees.keep_clear(level.canopy, level.boughs, t, level.exits)
     level.explored[:] = True
     return level
+
+
+def hill(xs, ys) -> np.ndarray:
+    """A round hill in the north-east, steeper on its north side, its slopes kept climbable."""
+    cx, cy, rx, ry, top = HILL
+    d = np.sqrt(((xs - cx) / rx) ** 2 + ((ys - cy) / ry) ** 2) + np.zeros((ARENA_W, ARENA_H))
+    steep = np.where(ys < cy, 1.6, 1.0)
+    h = np.clip(top * (1 - d) * steep, 0, top).astype(np.int16)
+    return elevation.relax(h)
 
 
 def swatches(t: np.ndarray, rng: random.Random) -> None:
@@ -173,7 +198,8 @@ def pens(level: Level, rng: random.Random) -> None:
                 inside = [c for c in inside if T.WALK[t[c]] and not T.WATERY[t[c]]]
             x, y = inside[len(inside) // 2]
             if kind in ANIMALS:
-                level.actors.append(people.Actor(kind, kind, x, y, work=inside))
+                name = rng.choice(people.PET_NAMES[kind]) if kind in PETS else kind
+                level.actors.append(people.Actor(kind, name, x, y, work=inside))
                 level.places.append(Place("pasture", f"a pen of {ANIMALS[kind].plural}", inside, kind))
             else:
                 level.actors.append(people.Actor(kind, people.person_name(rng, used), x, y, home=inside,
@@ -202,6 +228,10 @@ def settlement(level: Level, world, rng: random.Random, site: Site, at: tuple[in
     for p in sub.places:
         p.tiles = shift(p.tiles)
         level.places.append(p)
+    for (x, y), key in sub.exits.items():             # the inn's stairs
+        level.exits[(x + x0, y + y0)] = key
+    for (x, y), pile in sub.items.items():            # the axe, the shovel
+        level.items[(x + x0, y + y0)] = pile
     moved: dict[int, list] = {}
     for a in sub.actors:
         a.x, a.y = a.x + x0, a.y + y0

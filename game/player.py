@@ -14,6 +14,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .climate import Conditions
+from .items import Inventory
+
+START_COINS = 20
 
 NORMAL = 37.0
 COMFORT_LOW, COMFORT_HIGH = 12.0, 29.0   # felt temperature (with clothing) that needs no effort
@@ -36,6 +39,7 @@ class Player:
     alive: bool = True
     cause: str = ""          # what killed you
     warned: set = field(default_factory=set)
+    inventory: Inventory = field(default_factory=lambda: Inventory(coin=START_COINS))
 
 
 def feels_like(air: float, wind: float, wet: float, shelter: float) -> float:

@@ -3,7 +3,7 @@
 **Gathering to Aevum: The Necromancer's Key**
 *Chapter II: Wandering the Mundane*
 
-Version 1.1.0. Windows players can download the exe from the
+Version 1.2.0. Windows players can download the exe from the
 [Releases](https://github.com/bsodcat/wandering/releases) page and run it; nothing else
 to install. Settings are kept in `%APPDATA%/newrogue/settings.json`.
 
@@ -50,16 +50,23 @@ A 256x256 local map for testing (`game/arena.py`), always the same, always fair 
 summer's morning, and explored from the start:
 
 - **The gallery**, north of where you start: every tile in the game on its own flagstone, a
-  row for each kind: ground, trees, ways, building, furniture and trades, fields.
-- **Pens**, south: one of each of the townsfolk (baker, butcher, innkeeper, farmer, fisherman,
-  lumberjack), each with a bit of their trade, then one of every animal.
+  row for each kind: ground, trees, ways, building, furniture and trades, fields. Under it,
+  every item lies ready to pick up, the axe and the shovel among them.
+- **A hill**, north-east: 14 levels high, steeper on its north side, for climbing and for
+  seeing over.
+- **A dig site**: the dirt patch in the north-west has something buried under every other tile.
+- **Pens**, south: one of each of the townsfolk (baker, butcher, innkeeper, barkeeper, farmer,
+  fisherman, lumberjack), each with a bit of their trade, then one of every animal, the dog
+  and the cat among them.
 - **Ground**, north-west: a patch of every kind of ground, and a broadleaf wood, a pine wood
   and a jungle.
 - **Water**, east: a river with a bridge, and a lake with a beach and a pier.
 - **A town and a village**, far south: built and peopled the same way as in the world, with
   an inn, a bakery, a butcher's, houses, fields, pastures and a lumber camp.
 
-Point at anything to name it. Stairs there lead nowhere; leave by Esc, then Main menu.
+It's fine all day but for a shower at six in the evening, so dug ground grows back overnight.
+The town's inn has its upstairs and cellar. Point at anything to name it. The gallery's
+stairs lead nowhere; leave by Esc, then Main menu.
 
 | Key | Overworld | Local map |
 | --- | --- | --- |
@@ -67,9 +74,13 @@ Point at anything to name it. Stairs there lead nowhere; leave by Esc, then Main
 | Enter or `>` | go into the region you're in | take the stairs you're on |
 | `<` | | stairs up; anywhere else on the surface, back to the overworld |
 | `.` or numpad 5 | wait an hour | wait an hour |
-| `z` | rest 8 hours | rest 8 hours |
-| `o` | cycle overlays: Normal, Elevation, Temperature, Moisture, Weather | |
-| Tab | right panel: Info, Map, Log, hidden | same |
+| `z` | rest 8 hours | rest 8 hours; on a bed upstairs at an inn with a room key, sleep till morning |
+| `o` | cycle overlays: Normal, Elevation, Temperature, Moisture, Weather | relief view: each tile's height |
+| `g` | | pick up what's at your feet |
+| `x` | | dig where you stand (needs a shovel) |
+| `i` | the Inv tab: what you carry | same |
+| walk into... | | a person: talk (or trade, if they trade); a dog or cat: pet it; a tree, with an axe: fell it |
+| Tab | right panel: Info, Map, Log, Inv, hidden | same |
 | `c` | show or hide the stats panel | same |
 | PgUp / PgDn, wheel | scroll the Log tab | same |
 | `v` | | switch between the treetops and the ground beneath them |
@@ -221,6 +232,49 @@ there and kept with what you've explored.
 Trees never block a way in. After the structures are built, every trunk within about 3
 columns of a door, stairs, a well, a gate or the step outside a door is felled. No leaves hang
 over buildings, streets, roads, paths, docks or bridges, or right over an entrance.
+
+**Elevation** (`game/elevation.py`). Every tile of a local map has a height in levels of 20 m:
+the world's elevation smoothed between region middles, plus rolling hills, gentle on the plains
+and rough in the hills and mountains. It runs on across region borders like the land.
+- Neighbouring tiles are never more than two levels apart, so there's always a way up.
+  Settlements are levelled.
+- A step up a level is a slope (slower, and tiring). Two levels is a steep scramble that takes
+  far longer. Steeper than that can't be climbed. Roads, streets and paths are graded, so
+  they're never worse than a slope. Going down is quicker than going up. A walk to the pointer
+  finds a way round anything too steep.
+- Sight: you see a tile only if the ground between doesn't rise above the line from your eyes
+  to it. From a hilltop you see far; a ridge hides what's beyond it, and from the edge of a
+  drop you can't see its foot. The overworld does the same with the world's elevation, and
+  climbing there costs hours (2.5 h per 1000 m up, less on roads).
+- Ground above you is drawn brighter and ground below you darker, and the foot of a rise lies
+  in its shadow. `o` shows the relief: each tile's height (its last digit) on a colour from low
+  to high. The stats panel shows your height in metres.
+
+**Things and tools** (`game/items.py`). You start with 20 coins.
+- `g` picks up what's lying at your feet, and the Inv tab (`i`) shows what you carry.
+- **Axe**: one leans by every lumberjack's house. Walk into a tree with it to fell it: 20
+  minutes of hard work for 2 logs (3 from a jungle tree), leaving a stump. Its leaves come off
+  the layer above.
+- **Shovel**: there's one in a house in every town and village. `x` digs where you stand, on
+  open ground (grass, dirt, sand, mud, snow): half an hour's work. You only find what was buried
+  there (coins, arrowheads, pottery, old bones, rusty daggers, now and then a silver ring), more
+  in old ruins. Digging leaves turned earth (`░`) but doesn't change the height.
+- Dug ground waits for rain. Four hours after the first rain falls on it, grass grows back.
+
+**Shops** (`game/shop.py`). Walk into someone who trades, while they're at work, and their shop
+opens: Up/Down or the mouse to choose, Enter to trade, Esc to leave.
+- A **lumberjack** buys logs at 3 coins each, once you've cut some.
+- A **barkeeper** lets a room upstairs for 8 coins. You get a room key, good till 10:00 the
+  next morning. Sleep (`z`) in any bed upstairs and you sleep till 07:00, waking rested.
+  Without a key the beds are off limits.
+
+**Inns** have two more floors: stairs up to a corridor of guest rooms with a bed in each, and
+down to a stone cellar of barrels. Each inn has an innkeeper (07:00-21:00) and a barkeeper
+(10:00-24:00, behind the bar).
+
+**Pets.** Every town has a dog or a cat with a name. It wanders the town, and when you're
+near it trots after you, keeping a step or two off (the dog more keenly than the cat). Walk
+into it to pet it.
 
 **Fire and water.**
 - Every house, inn and shed in a settlement has a torch (`¡`) on the wall beside its door, and

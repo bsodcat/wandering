@@ -59,6 +59,10 @@ class Level:
     actors: list = field(default_factory=list)         # people and animals (people.py)
     sim_minutes: float | None = None                   # the clock when the actors were last moved
     crop: int | None = None                            # the grain grown here, if any
+    elev: np.ndarray | None = None                     # ground height in levels (elevation.py)
+    items: dict = field(default_factory=dict)          # (x, y) -> [item kind, ...] lying there
+    buried: dict = field(default_factory=dict)         # (x, y) -> (item kind, how many) under the ground
+    dug: dict = field(default_factory=dict)            # (x, y) -> [the ground it was, when rain first fell on it]
 
     def __post_init__(self):
         if self.explored is None:
@@ -67,6 +71,8 @@ class Level:
             self.canopy = np.zeros(self.tiles.shape, dtype=np.uint8)
         if self.boughs is None:
             self.boughs = np.zeros(self.tiles.shape, dtype=np.int32)
+        if self.elev is None:
+            self.elev = np.zeros(self.tiles.shape, dtype=np.int16)
 
     @property
     def region(self) -> tuple[int, int]:

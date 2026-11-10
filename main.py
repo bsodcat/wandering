@@ -31,6 +31,15 @@ def handle_mouse(engine: Engine, event) -> None:
     panels = engine.panels
     if isinstance(event, (tcod.event.MouseMotion, tcod.event.MouseButtonDown, tcod.event.MouseButtonUp)):
         engine.mouse = tuple(event.integer_position)
+    if engine.shop is not None and not engine.menu.open:    # so does a shop
+        if engine.mouse and isinstance(event, tcod.event.MouseMotion):
+            i = engine.shop.row_at(*engine.mouse)
+            if i is not None:
+                engine.shop.cursor = i
+        elif engine.mouse and isinstance(event, tcod.event.MouseButtonDown) \
+                and event.button == tcod.event.MouseButton.LEFT and not engine.shop.click(*engine.mouse, engine):
+            engine.shop = None
+        return
     if engine.menu.open:                    # the menu takes the mouse while it's up
         if engine.mouse and isinstance(event, tcod.event.MouseMotion):
             engine.menu.hover(*engine.mouse)

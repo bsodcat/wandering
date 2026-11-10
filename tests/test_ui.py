@@ -33,13 +33,13 @@ class LayoutTests(unittest.TestCase):
     def test_the_window_is_four_by_three(self):
         self.assertEqual(SCREEN_W * 10 * 3, SCREEN_H * 20 * 4)
 
-    def test_tab_cycles_info_map_log_hidden(self):
+    def test_tab_cycles_info_map_log_inv_hidden(self):
         p = Panels()
         seen = []
-        for _ in range(5):
+        for _ in range(6):
             seen.append(p.tab if p.right_open else None)
             p.handle_key(KeySym.TAB)
-        self.assertEqual(seen, ["info", "map", "log", None, "info"])
+        self.assertEqual(seen, ["info", "map", "log", "inv", None, "info"])
 
     def test_c_hides_and_shows_the_stats(self):
         p = Panels()

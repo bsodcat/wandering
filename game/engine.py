@@ -13,6 +13,15 @@ The mouse: pointing at a place describes it (`describe`); a left click puts that
 Holding the right button walks you toward the pointer a step at a time (`step_toward`), over
 ground you know, until you get there, let go, or something needs your attention.
 
+Ground rises and falls (game/elevation.py): a step up or down a level is a slope, two is a
+scramble, and high ground hides what's behind it. On the overworld, climbing costs hours.
+
+What you carry (game/items.py): g picks up what's at your feet, i shows your bag, x digs with a
+shovel for what's buried, and walking into a tree with an axe fells it for logs. Walking into
+someone who trades opens their shop (game/shop.py); walking into a dog or cat pets it. A room
+key from an inn's barkeeper lets you sleep (z) in a bed upstairs. Dug ground grows back over a
+few hours once it's rained on.
+
 Local maps are built when first visited and kept, with what you've explored, for the rest of
 the game. The weather and temperature come from the region you're in either way.
 """
@@ -25,13 +34,16 @@ import tcod
 from tcod.event import KeySym, Modifier
 
 from . import biomes as B
+from . import elevation
+from . import items
 from . import people
+from . import shop as shops
 from . import tiles as T
 from . import trees
-from .farming import crop_stage
+from .farming import PETS, crop_stage
 from .light import SEEN_FROM_AFAR, firelight
-from .climate import (DAYS_PER_SEASON, MINUTES_PER_DAY, MINUTES_PER_HOUR, Climate, Conditions, latitude,
-                      shelter_at, snow_cover, time_of_day)
+from .climate import (DAYS_PER_SEASON, MINUTES_PER_DAY, MINUTES_PER_HOUR, Climate, Conditions, hour_of_day,
+                      latitude, shelter_at, snow_cover, time_of_day)
 from .level import Level
 from .localgen import LOCAL_H, LOCAL_W, make_level, node_local
 from .player import Player, expose, tire
@@ -52,6 +64,12 @@ OVERWORLD_EFFORT = 0.5  # a day's travel is steadier going than scrambling about
 MENU_KEY = KeySym.ESCAPE  # the pause menu: resume, options, quit
 FULLSCREEN_KEY = KeySym.F11
 OVERLAYS = ["Normal", "Elevation", "Temperature", "Moisture", "Weather"]
+PICKUP_KEY, DIG_KEY, BAG_KEY = KeySym.G, KeySym.X, KeySym.I
+CHOP_MINUTES, CHOP_EFFORT = 20, 2.5     # felling a tree
+DIG_MINUTES, DIG_EFFORT = 30, 2.5       # digging a hole
+REGROW_MINUTES = 4 * 60                 # dug ground greens over this long after rain first falls on it
+WAKE_HOUR = 7                           # sleeping in a bed you've paid for, you sleep till then
+ROOM_UNTIL_HOUR = 10                    # and give the key back by then
 
 START_MINUTES = 8 * MINUTES_PER_HOUR  # 08:00 on the first day of spring
 ROAD_TRAVEL = 0.6       # hours per region along a road
@@ -67,7 +85,8 @@ LOOKOUT_RANGE = 12     # regions you can see from the top of a tower
 LOCAL_KNOWLEDGE = {"town": 14, "village": 8, "inn": 6}  # regions around a settlement its people tell you about
 LEAF_NAMES = {trees.BROADLEAF: "broadleaf", trees.PINE: "pine", trees.JUNGLE: "jungle"}
 WHERE_STAIRS_GO = {"cave": "the caves below", "crypt": "a crypt below", "tower": "the tower above",
-                   "region": "the surface"}
+                   "region": "the surface", "inn_up": "the rooms upstairs", "cellar": "the cellar",
+                   "arena": "the arena"}
 SKY = {"Clear": "clear", "Cloudy": "cloudy", "Overcast": "overcast", "Fog": "foggy", "Rain": "raining",
        "Storm": "stormy", "Snow": "snowing", "Blizzard": "a blizzard"}
 
@@ -108,6 +127,9 @@ class Engine:
         self.quitting = False              # Quit was clicked in the menu
         self.to_title = False              # Main menu was picked: back to the title screen
         self.fair = False                  # always fair weather (the dev arena)
+        self.shop: shops.Shop | None = None  # the shop you're trading at, if any
+        self.room_until: float | None = None  # when your inn room key goes back
+        self.relief = False                # o on a local map: colour it by height
         self.disturbed = False             # something happened that should stop a walk
         self.local_visible = np.zeros((1, 1), dtype=bool)
         self.update_view()
@@ -228,9 +250,11 @@ class Engine:
     def weather(self) -> Conditions:
         """The weather where you are now (always fair and mild in the dev arena)."""
         c = self.climate.at(self.player.x, self.player.y, self.minutes)
-        if self.fair:
-            c = Conditions(air=max(c.air, 18.0), cloud=0.1, precip=0.0, wind=min(c.wind, 8.0), fog=0.0,
-                           light=c.light, kind="Clear")
+        if self.fair:      # fine all day, but for a shower at six in the evening
+            shower = 18 <= float(hour_of_day(self.minutes)) < 19
+            c = Conditions(air=max(c.air, 18.0), cloud=0.6 if shower else 0.1, precip=0.35 if shower else 0.0,
+                           wind=min(c.wind, 8.0), fog=0.0, light=c.light * (0.8 if shower else 1.0),
+                           kind="Rain" if shower else "Clear")
         return c
 
     def sight_radius(self) -> int:
@@ -258,6 +282,7 @@ class Engine:
         if w.river[x, y] and not on_road:
             hours += RIVER_TRAVEL
             soak += RIVER_SOAK
+        hours += elevation.world_climb_hours(w, (x - dx, y - dy), (x, y)) * (0.5 if on_road else 1.0)
         if dx and dy:
             hours *= 1.41
         if self.now.light < 0.25:
@@ -324,7 +349,14 @@ class Engine:
 
     def get_level(self, key: tuple) -> Level:
         if key not in self.levels:
-            self.levels[key] = make_level(self.world, key)
+            level = make_level(self.world, key)
+            if key[0] in ("inn_up", "cellar"):         # named after the inn they're in
+                ground = self.level if self.level is not None and self.level.region == key[1:3] else \
+                    self.levels.get(("region", key[1], key[2]))
+                inn = next((b.name for b in ground.buildings if b.kind == "inn"), None) if ground else None
+                if inn:
+                    level.name = f"Upstairs at {inn}" if key[0] == "inn_up" else f"The cellar of {inn}"
+            self.levels[key] = level
         return self.levels[key]
 
     def enter_region(self) -> bool:
@@ -364,23 +396,164 @@ class Engine:
         if not level.in_bounds(nx, ny):
             return self.cross_border(dx, dy, nx, ny)
         tile = int(level.tiles[nx, ny])
+        if tile in trees.KIND and self.player.inventory.count("axe"):
+            return self.chop(nx, ny)
         if not T.WALK[tile]:
             self.say("The water is too deep to wade." if tile == T.DEEP_WATER
                      else f"The {T.TILES[tile].name} is in the way.")
             return False
+        dh = int(level.elev[nx, ny]) - int(level.elev[self.lx, self.ly])
+        graded = tile in elevation.GRADED and int(level.tiles[self.lx, self.ly]) in elevation.GRADED
+        ok, slow, extra, note = elevation.climb(dh, graded)
+        if not ok:
+            self.say(note)
+            return False
         someone = people.actor_at(level, nx, ny)
-        if someone is not None:              # talk, and step past each other
-            self.say(people.talk(someone, level, self))
-            someone.x, someone.y = self.lx, self.ly
-            someone.goal, someone.path = None, []
+        if someone is not None and not self.meet(someone):
+            return False
         was_inside = self.indoors
         self.lx, self.ly = nx, ny
+        if note:
+            self.say(note)
         if (nx, ny) in level.exits:
             self.say(f"There are {T.TILES[tile].name} here.")
         elif self.indoors != was_inside and not level.underground:
             self.say("You step inside." if self.indoors else "You step outside.")
-        self.pass_time(self.step_minutes(tile, dx, dy) / 60, float(T.SOAK[tile]), effort=step_effort(tile))
+        if level.items.get((nx, ny)):
+            self.say(f"There's {items.describe_pile(level.items[(nx, ny)])} here (g picks it up).")
+        self.pass_time(self.step_minutes(tile, dx, dy) * slow / 60, float(T.SOAK[tile]),
+                       effort=step_effort(tile) + extra)
         return True
+
+    def at_work(self, a) -> bool:
+        if a.animal or a.doing == "asleep":
+            return False
+        job = people.JOBS[a.kind]
+        return job.start <= float(hour_of_day(self.minutes)) < job.end
+
+    def meet(self, someone) -> bool:
+        """Walking into someone: pet them, trade, or talk and step past. Returns whether you
+        go on into their place."""
+        level = self.level
+        if someone.kind in PETS:
+            self.say(people.talk(someone, level, self))
+            self.pass_time(1 / 60)
+            return False
+        shop = shops.for_actor(someone, self) if self.at_work(someone) else None
+        if shop is not None:
+            someone.met = True
+            self.say(f'{someone.name.split()[0]}: "{shop.greeting}"')
+            self.shop = shop
+            self.autopath = False
+            return False
+        self.say(people.talk(someone, level, self))
+        if someone.kind == "lumberjack" and self.at_work(someone):
+            self.say(f'{someone.name.split()[0]}: "Fell a tree or two and I\'ll buy the logs, '
+                     f'{shops.LOG_PRICE} coins apiece. My axe is by the house."')
+        someone.x, someone.y = self.lx, self.ly
+        someone.goal, someone.path = None, []
+        return True
+
+    # ------------------------------------------------------------- things to do
+
+    def chop(self, x: int, y: int) -> bool:
+        """Fells the tree at (x, y) with your axe."""
+        level = self.level
+        logs = trees.fell(level, x, y)
+        level._walk_costs = None
+        self.player.inventory.add("log", logs)
+        self.say(f"You fell the tree with your axe and cut {items.amount('log', logs)}.")
+        self.pass_time(CHOP_MINUTES / 60, effort=CHOP_EFFORT)
+        return False
+
+    def pick_up(self) -> None:
+        if self.level is None:
+            self.say("There's nothing to pick up out here; step down into the region (Enter).")
+            return
+        got = items.pick_up(self.level, self.lx, self.ly, self.player.inventory)
+        if not got:
+            self.say("There's nothing here to pick up.")
+            return
+        self.say(f"You pick up {items.describe_pile(got)}.")
+        for kind in dict.fromkeys(got):
+            if items.KINDS[kind].note:
+                self.say(f"The {items.KINDS[kind].name}: {items.KINDS[kind].note}.")
+
+    def dig(self) -> None:
+        """Digs where you stand, for whatever's buried there. The ground stays at its height;
+        the hole is just turned earth, and greens over after rain."""
+        level = self.level
+        if level is None:
+            self.say("Step down into the region (Enter) to find somewhere to dig.")
+            return
+        if not self.player.inventory.count("shovel"):
+            self.say("You need a shovel to dig.")
+            return
+        tile = int(level.tiles[self.lx, self.ly])
+        if tile == T.DUG:
+            self.say("You've already dug here.")
+            return
+        if level.underground or not T.DIGGABLE[tile]:
+            self.say(f"You can't dig into the {T.TILES[tile].name}.")
+            return
+        level.dug[(self.lx, self.ly)] = [tile, None]
+        level.tiles[self.lx, self.ly] = T.DUG
+        level._walk_costs = None
+        found = level.buried.pop((self.lx, self.ly), None)
+        if found:
+            self.player.inventory.add(*found)
+            self.say(f"You dig a hole and find {items.amount(*found)}!")
+        else:
+            self.say("You dig a hole, but there's nothing down there.")
+        self.pass_time(DIG_MINUTES / 60, effort=DIG_EFFORT)
+
+    def regrow(self) -> None:
+        """Dug ground waits for rain, and then greens over."""
+        for level in self.levels.values():
+            if not level.dug or level.underground:
+                continue
+            raining = None
+            grew = False
+            for spot, record in list(level.dug.items()):
+                if record[1] is None:
+                    if raining is None:
+                        c = self.now if level is self.level else self.climate.at(*level.region, self.minutes)
+                        raining = c.raining
+                    if raining:
+                        record[1] = self.minutes
+                elif self.minutes - record[1] >= REGROW_MINUTES:
+                    was = record[0]
+                    level.tiles[spot] = T.GRASS if was in (T.GRASS, T.TALL_GRASS, T.DRY_GRASS) else was
+                    del level.dug[spot]
+                    level._walk_costs = None
+                    grew = True
+            if grew and level is self.level:
+                self.say("The ground you dug has grown back over.")
+
+    def rent_room(self) -> None:
+        """Paid for a room: the key's good till mid-morning."""
+        day = int(self.minutes // MINUTES_PER_DAY)
+        hour = float(hour_of_day(self.minutes))
+        self.room_until = (day + (1 if hour >= ROOM_UNTIL_HOUR - 4 else 0)) * MINUTES_PER_DAY + \
+            ROOM_UNTIL_HOUR * MINUTES_PER_HOUR
+        self.say("The rooms are upstairs. Any free bed is yours tonight.")
+
+    def rest(self) -> None:
+        level = self.level
+        p = self.player
+        if level is not None and level.key[0] == "inn_up" and level.tiles[self.lx, self.ly] == T.BED:
+            if not p.inventory.count("room key"):
+                self.say("These beds are for paying guests. The barkeeper downstairs lets them.")
+                return
+            hours = (WAKE_HOUR - float(hour_of_day(self.minutes))) % 24 or 24
+            self.say(f"You sleep soundly in a warm bed {level.name[0].lower()}{level.name[1:]}.")
+            self.wait(hours)
+            if p.alive:
+                p.stamina, p.health, p.wet = 100.0, min(100.0, p.health + 30), 0.0
+                self.say("You wake well rested.")
+            return
+        self.say(f"You rest for {REST_HOURS} hours.")
+        self.wait(REST_HOURS)
 
     def cross_border(self, dx: int, dy: int, nx: int, ny: int) -> bool:
         level = self.level
@@ -414,12 +587,16 @@ class Engine:
         if key is None or (way == "down" and tile != T.STAIRS_DOWN) or (way == "up" and tile != T.STAIRS_UP):
             if way == "up" and level.surface and key is None:
                 return self.leave_region()
-            if key is None and tile in (T.STAIRS_DOWN, T.STAIRS_UP):
+            if key is None and tile in (T.STAIRS_DOWN, T.STAIRS_UP):  # (the arena's gallery)
                 self.say("These stairs don't lead anywhere.")
                 return False
             self.say("There are no stairs here." if key is None else f"These stairs go {'down' if tile == T.STAIRS_DOWN else 'up'}.")
             return False
         nxt = self.get_level(key)
+        if level.key[0] == "arena":           # the arena's buildings lead back to the arena
+            for pos, back in list(nxt.exits.items()):
+                if back == ("region", *nxt.region):
+                    nxt.exits[pos] = level.key
         self.level = nxt
         self.lx, self.ly = nxt.arrival(level.key) or nxt.nearest_walkable(nxt.width / 2, nxt.height / 2)
         self.say(f"You climb {'down' if tile == T.STAIRS_DOWN else 'up'} to {nxt.name}.")
@@ -457,6 +634,16 @@ class Engine:
         if tile.id in T.GRAINS:
             name += ", " + people.crop_words(self.crop_stage)
         lines = ["You, on " + name if here else name.capitalize()]
+        pile = level.items.get((x, y))
+        if pile:
+            lines.insert(0, items.describe_pile(pile).capitalize() + " lying here")
+        dh = int(level.elev[x, y]) - int(level.elev[self.lx, self.ly])
+        if here and level.elev.max() > level.elev.min():
+            lines.append(f"Height {int(level.elev[x, y])} ({int(level.elev[x, y]) * elevation.LEVEL_M:.0f} m)")
+        elif dh:
+            lines.append(f"{abs(dh)} level{'s' if abs(dh) != 1 else ''} {'above' if dh > 0 else 'below'} you")
+        if (x, y) in level.dug:
+            lines.append("Greening over" if level.dug[(x, y)][1] is not None else "Freshly dug")
         someone = people.actor_at(level, x, y)
         if someone is not None and self.local_visible[x, y] and not here:
             lines = people.describe(someone) + lines
@@ -537,7 +724,15 @@ class Engine:
         if not cost[x, y]:
             return []
         cost[start] = max(1, int(cost[start]))
-        graph = tcod.path.SimpleGraph(cost=cost, cardinal=2, diagonal=3)
+        if self.level is not None:          # no steps too steep to climb
+            graph = tcod.path.CustomGraph(cost.shape)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if dx or dy:
+                        graph.add_edge((dx, dy), 3 if dx and dy else 2, cost=cost,
+                                       condition=elevation.passable(self.level.elev, self.level.tiles, dx, dy))
+        else:
+            graph = tcod.path.SimpleGraph(cost=cost, cardinal=2, diagonal=3)
         finder = tcod.path.Pathfinder(graph)
         finder.add_root(start)
         path = finder.path_to((x, y)).tolist()
@@ -587,6 +782,11 @@ class Engine:
                 self.say(text)
                 self.disturbed = True       # a warning about your body stops a walk
             soak = 0.0
+            self.regrow()
+        if self.room_until is not None and self.minutes >= self.room_until:
+            self.room_until = None
+            if self.player.inventory.take("room key", self.player.inventory.count("room key")):
+                self.say("It's mid-morning: your room key goes back to the barkeeper.")
         if self.level is not None:
             people.advance(self.level, self.minutes, self)
         self.update_view()
@@ -621,13 +821,17 @@ class Engine:
                                         algorithm=tcod.constants.FOV_SYMMETRIC_SHADOWCAST)
             xs, ys = np.ogrid[: level.width, : level.height]
             round_on_screen = (xs - self.lx) ** 2 + (2 * (ys - self.ly)) ** 2 <= r * r + 1  # rows are twice as tall
-            self.local_visible = seen & (round_on_screen | fire)
+            seen &= round_on_screen | fire
+            if level.elev.max() > level.elev.min():      # the lie of the land hides what's behind it
+                seen = elevation.sightlines(level.elev, (self.lx, self.ly), seen)
+            self.local_visible = seen
             level.explored |= self.local_visible
             return
         transparent = ~B.BLOCKS_VIEW[self.world.biome]
         transparent[p.x, p.y] = True
         self.visible = tcod.map.compute_fov(transparent, (p.x, p.y), self.sight_radius(),
                                             algorithm=tcod.constants.FOV_SYMMETRIC_SHADOWCAST)
+        self.visible = elevation.world_sightlines(self.world, (p.x, p.y), self.visible)
         self.explored |= self.visible
 
     # ------------------------------------------------------------- keys
@@ -643,6 +847,11 @@ class Engine:
             if result == "title":
                 self.to_title = True
             return result != "quit"
+        if self.shop is not None:
+            if not self.shop.handle_key(sym, self):
+                self.shop = None
+                self.say("You leave off trading.")
+            return True
         if sym == MENU_KEY:
             self.menu.show("pause")
             self.autopath = False
@@ -651,6 +860,15 @@ class Engine:
             return True
         if sym == OVERLAY_KEY and self.level is None:
             self.overlay = (self.overlay + 1) % len(OVERLAYS)
+        elif sym == OVERLAY_KEY:
+            self.relief = not self.relief
+            self.say("You take in the lie of the land." if self.relief else "You look about you.")
+        elif sym == BAG_KEY:
+            self.panels.show("inv")
+        elif sym == PICKUP_KEY and self.player.alive:
+            self.pick_up()
+        elif sym == DIG_KEY and self.player.alive:
+            self.dig()
         elif sym == REVEAL_KEY:
             if self.level is None:
                 self.reveal = not self.reveal
@@ -677,6 +895,5 @@ class Engine:
         elif sym in WAIT_KEYS:
             self.wait(1)
         elif sym == REST_KEY:
-            self.say(f"You rest for {REST_HOURS} hours.")
-            self.wait(REST_HOURS)
+            self.rest()
         return True

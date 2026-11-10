@@ -146,3 +146,23 @@ def leaf_shelter(kind: int, look: str) -> float:
     if kind == NONE:
         return 0.0
     return LEAF_SHELTER[look] if kind == BROADLEAF else EVERGREEN_SHELTER
+
+
+# ----------------------------------------------------------------- felling
+
+LOGS = {T.TREE: 2, T.PINE: 2, T.JUNGLE_TREE: 3}    # what a felled trunk cuts into
+
+
+def fell(level, x: int, y: int) -> int:
+    """Cuts down the trunk at (x, y), leaving a stump, and takes its crown off the layer above
+    (leaves from the trees around stay). Returns how many logs it made."""
+    logs = LOGS.get(int(level.tiles[x, y]), 0)
+    level.tiles[x, y] = T.STUMP
+    w, h = level.tiles.shape
+    x0, x1, y0, y1 = max(0, x - 9), min(w, x + 10), max(0, y - 5), min(h, y + 6)
+    canopy, boughs = crowns(level.tiles[x0:x1, y0:y1])
+    keep_clear(canopy, boughs, level.tiles[x0:x1, y0:y1])
+    near = (slice(max(0, x - 4) - x0, min(w, x + 5) - x0), slice(max(0, y - 2) - y0, min(h, y + 3) - y0))
+    level.canopy[x0:x1, y0:y1][near] = canopy[near]
+    level.boughs[x0:x1, y0:y1][near] = boughs[near]
+    return logs

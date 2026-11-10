@@ -5,9 +5,13 @@ Each settlement is populated when its map is built:
 - towns:    a baker, a butcher, an innkeeper, farmers for the gardens, and a fisherman and a
             lumberjack if there's water to fish and woods to cut
 - villages: farmers for the fields, and a fisherman and a lumberjack in the same way
-- inns:     an innkeeper
+- inns:     an innkeeper, and a barkeeper who lets the rooms upstairs for the night
 - animals:  a herd in each pasture (what suits the land, see farming.py), and hens about
-            the houses
+            the houses; and in a town, a dog or a cat that follows you about if you're near
+            (walk into it to pet it)
+
+The lumberjack keeps an axe leaning by their house, and somewhere in a house in every town
+and village there's a shovel (game/items.py).
 
 Everyone lives in a house (the innkeeper at the inn) and keeps hours:
 
@@ -17,7 +21,8 @@ Everyone lives in a house (the innkeeper at the inn) and keeps hours:
     farmer       06:00-18:00
     lumberjack   07:00-17:00
     butcher      07:00-16:00
-    innkeeper    09:00-24:00  behind the bar; sleeps at the inn
+    innkeeper    07:00-21:00  keeping the inn; sleeps there
+    barkeeper    10:00-24:00  behind the bar, letting rooms; sleeps at the inn
 
 They walk where they're going a tile at a time as the clock runs, a little under a minute a
 tile, wander about while they work, and step round each other and you. If you've been away a
@@ -37,12 +42,15 @@ import tcod
 
 from . import tiles as T
 from .climate import hour_of_day
-from .farming import ANIMALS, STAGE_WORDS
+from . import items
+from .farming import ANIMALS, PETS, STAGE_WORDS
 
 PERSON = "☺"
 WALK_MINUTES = 0.8            # a tile, for people
 SNAP_MINUTES = 30             # away longer than this, and everyone is just where they'd be
 MOST_STEPS = 60               # steps anyone takes in one go
+FOLLOW = 12                   # a pet follows you if you're this close (columns on screen)
+HEEL = 2                      # and stays about this far away
 BEDTIME = 21
 
 
@@ -71,10 +79,14 @@ JOBS = {
     "baker": Job((240, 225, 175), 4, 13, "baking bread",
                  ("Bread's fresh out of the oven.", "Been up since four.",
                   "Flour gets everywhere. Everywhere.", "Nothing like the smell of the ovens at dawn.")),
-    "innkeeper": Job((240, 190, 80), 9, 24, "serving at the bar",
-                     ("Welcome to {inn}! Warm fire, soft beds.", "What'll it be?",
+    "innkeeper": Job((240, 190, 80), 7, 21, "keeping the inn",
+                     ("Welcome to {inn}! Warm fire, soft beds.", "Rooms are upstairs; see the barkeeper.",
                       "Travellers bring the best stories.", "Wipe your boots, please.")),
+    "barkeeper": Job((220, 150, 200), 10, 24, "serving at the bar",
+                     ("What'll it be?", "A bed upstairs? That's {price} coins the night.",
+                      "Mind the cellar steps.", "Quiet tonight. Too quiet.")),
 }
+ROOM_PRICE = 8                # coins for a night upstairs at an inn
 EVENING = {"inn": "at {inn}", "green": "chatting on the green"}
 FIRST = ["Alder", "Bryn", "Cora", "Dale", "Edda", "Finn", "Greta", "Hal", "Ida", "Jory", "Kit", "Lena",
          "Milo", "Nell", "Oren", "Pia", "Quin", "Rhea", "Sol", "Tamsin", "Ulf", "Vera", "Wyn", "Yara",
@@ -115,6 +127,8 @@ class Actor:
 
     @property
     def title(self) -> str:
+        if self.kind in PETS:
+            return f"{self.name}, the town {self.kind}"
         return f"A {self.kind}" if self.animal else f"{self.name}, the {self.kind}"
 
 
@@ -131,11 +145,11 @@ def populate(level, site, rng: random.Random) -> None:
     camp = next((p for p in level.places if p.kind == "camp"), None)
     inn = buildings.get("inn")
     if site.kind == "town":
-        jobs = ["baker", "butcher", "innkeeper"] + ["farmer"] * min(2, len(fields_))
+        jobs = ["baker", "butcher", "innkeeper", "barkeeper"] + ["farmer"] * min(2, len(fields_))
     elif site.kind == "village":
         jobs = ["farmer"] * min(3, max(1, len(fields_) - 1))
     else:
-        jobs = ["innkeeper"]
+        jobs = ["innkeeper", "barkeeper"]
     if site.kind in ("town", "village"):
         jobs += ["fisherman"] * bool(water) + ["lumberjack"] * bool(camp)
     green = settle_green(level)
@@ -143,10 +157,12 @@ def populate(level, site, rng: random.Random) -> None:
     used_names = set()
     for i, job in enumerate(jobs):
         name = person_name(rng, used_names)
-        if job == "innkeeper":
+        house = None
+        if job in ("innkeeper", "barkeeper"):
             if inn is None:
                 continue
-            home = [c for c in inn.floor(t) if t[c] == T.BED][:1] or inn.floor(t)
+            beds = [c for c in inn.floor(t) if t[c] == T.BED]
+            home = beds[job == "barkeeper":][:1] or inn.floor(t)
         elif houses:
             house = houses.pop()
             house.name = f"the {name.split()[1]} house"
@@ -159,6 +175,8 @@ def populate(level, site, rng: random.Random) -> None:
         x, y = work[0]
         level.actors.append(Actor(job, name, x, y, home=home, work=work, evening=evening or green,
                                   evening_kind=evening_kind if evening else "green"))
+        if job == "lumberjack" and house is not None:
+            lean_axe(level, house)
     for place in (p for p in level.places if p.kind == "pasture"):
         for _ in range(rng.randint(3, 6) if place.animal != "horse" else 2):
             x, y = rng.choice(place.tiles)
@@ -168,6 +186,30 @@ def populate(level, site, rng: random.Random) -> None:
         for _ in range(rng.randint(3, 5)):
             x, y = rng.choice(yard)
             level.actors.append(Actor("hen", "hen", x, y, work=yard))
+        if site.kind == "town":
+            pet = rng.choice(PETS)
+            x, y = rng.choice(yard)
+            level.actors.append(Actor(pet, rng.choice(PET_NAMES[pet]), x, y, work=yard))
+    if site.kind in ("town", "village"):
+        rooms = [c for b in level.buildings if b.kind == "house" for c in b.floor(t) if t[c] == T.WOOD_FLOOR]
+        if rooms:
+            items.drop(level, *rng.choice(rooms), "shovel")
+
+
+PET_NAMES = {"dog": ["Biscuit", "Rufus", "Bramble", "Patch", "Scout", "Moss"],
+             "cat": ["Whiskers", "Soot", "Marmalade", "Thistle", "Pip", "Smudge"]}
+
+
+def lean_axe(level, house) -> None:
+    """The lumberjack's axe, leaning by the wall outside their door."""
+    t = level.tiles
+    dx, dy = house.door
+    around = [(dx + i, dy + j) for i in (-2, -1, 0, 1, 2) for j in (-1, 0, 1)]
+    spots = [c for c in around if level.in_bounds(*c) and T.WALK[t[c]] and not T.ROOF[t[c]]
+             and not T.WATERY[t[c]] and not house.contains(*c)]
+    spots.sort(key=lambda c: (t[c] in (T.PATH, T.STREET), abs(c[0] - dx) + abs(c[1] - dy)))
+    if spots:
+        items.drop(level, *spots[0], "axe")
 
 
 def person_name(rng: random.Random, used: set) -> str:
@@ -187,11 +229,13 @@ def workplace(level, job: str, i: int, fields_, water, camp, buildings) -> list:
         return water[0].tiles if water else []
     if job == "lumberjack":
         return camp.tiles if camp else []
-    kind = {"baker": "bakery", "butcher": "butcher", "innkeeper": "inn"}[job]
+    kind = {"baker": "bakery", "butcher": "butcher", "innkeeper": "inn", "barkeeper": "inn"}[job]
     b = buildings.get(kind)
     if b is None:
         return []
     floor = b.floor(t)
+    if job == "innkeeper":
+        return [c for c in floor if t[c] not in (T.STAIRS_UP, T.STAIRS_DOWN)]
     near_counter = [c for c in floor if any(t[c[0] + dx, c[1] + dy] in (T.COUNTER, T.OVEN)
                                             for dx in (-1, 0, 1) for dy in (-1, 0, 1))]
     return near_counter or floor
@@ -222,11 +266,14 @@ def plan(a: Actor, hour: float, names: dict) -> tuple[list, str]:
     if a.animal:
         if a.kind == "hen":
             return a.work, "pecking about" if 6 <= hour < 20 else "roosting"
+        if a.kind in PETS:
+            awake = "nosing about" if a.kind == "dog" else "watching everything"
+            return a.work, awake if 6 <= hour < 21 else "curled up asleep"
         return a.work, "grazing" if 6 <= hour < 20 else "resting"
     job = JOBS[a.kind]
     if job.start <= hour < job.end:
         return a.work, job.doing.format(**names)
-    if a.kind == "innkeeper":
+    if a.kind in ("innkeeper", "barkeeper"):
         return a.home, "asleep"
     if hour >= job.end and hour < BEDTIME:
         return a.evening, EVENING[a.evening_kind].format(**names)
@@ -237,7 +284,7 @@ def names_for(level, engine) -> dict:
     inn = next((b.name for b in level.buildings if b.kind == "inn"), "the inn")
     herd = next((p.animal for p in level.places if p.kind == "pasture"), "sheep")
     crop = T.TILES[level.crop].name if level.crop is not None else "vegetables"
-    return {"inn": inn, "town": level.name, "crop": crop, "herd": ANIMALS[herd].plural}
+    return {"inn": inn, "town": level.name, "crop": crop, "herd": ANIMALS[herd].plural, "price": ROOM_PRICE}
 
 
 def walk_costs(level) -> np.ndarray:
@@ -282,7 +329,10 @@ def advance(level, minutes: float, engine, rng: random.Random | None = None) -> 
             a.budget = min(a.budget + elapsed, MOST_STEPS * pace(a))
             while a.budget >= pace(a):
                 a.budget -= pace(a)
-                step(level, a, area, taken, rng)
+                if a.kind in PETS:
+                    pet_step(level, a, area, you, taken, rng)
+                else:
+                    step(level, a, area, taken, rng)
     level.sim_minutes = minutes
 
 
@@ -336,6 +386,34 @@ def step(level, a: Actor, area: list, taken: set, rng: random.Random) -> None:
     move(a, nxt, taken)
 
 
+def pet_step(level, a: Actor, area: list, you, taken: set, rng: random.Random) -> None:
+    """A dog or cat: trots after you if you're near, keeping a step or two off (the dog more
+    keenly than the cat), and otherwise wanders about the town."""
+    keen = 0.75 if a.kind == "dog" else 0.45
+    here = (a.x, a.y)
+    def gap(c):
+        return max(abs(c[0] - you[0]), abs(c[1] - you[1]) * 2) if you else 0
+    near = [c for c in ((a.x + dx, a.y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+            if c != here and level.walkable(*c) and not T.WATERY[level.tiles[c]] and c not in taken]
+    if not near:
+        return
+    if you and HEEL < gap(here) <= FOLLOW:
+        if rng.random() < keen:
+            move(a, min(near, key=gap), taken)
+        return
+    if you and gap(here) <= HEEL:
+        if rng.random() < 0.15:
+            move(a, rng.choice([c for c in near if gap(c) > 0] or near), taken)
+        return
+    if rng.random() < 0.4:
+        home = area_set(a, area)
+        inside = [c for c in near if c in home]
+        if home and here not in home:
+            inside = [min(near, key=lambda c: min(abs(c[0] - h[0]) + abs(c[1] - h[1]) for h in area[::7] or area))]
+        if inside:
+            move(a, rng.choice(inside), taken)
+
+
 def area_set(a: Actor, area: list) -> set:
     key = id(area)
     cache = getattr(a, "_areas", None)
@@ -372,6 +450,9 @@ def actor_at(level, x: int, y: int) -> Actor | None:
 def talk(a: Actor, level, engine, rng: random.Random | None = None) -> str:
     """What happens when you walk into someone (or something)."""
     rng = rng or random.Random()
+    if a.kind in PETS:
+        a.met = True
+        return rng.choice(PETTING[a.kind]).format(name=a.name)
     if a.animal:
         info = ANIMALS[a.kind]
         return f"You push past the {a.kind}. It {info.sound}."
@@ -383,6 +464,16 @@ def talk(a: Actor, level, engine, rng: random.Random | None = None) -> str:
         a.met = True
         return f'{a.name}, the {a.kind}: "Hello! I\'m {a.name.split()[0]}. {line}"'
     return f'{a.name.split()[0]}: "{line}"'
+
+
+PETTING = {
+    "dog": ("You pet {name}. Its tail wags so hard its whole back end wiggles.",
+            "You scratch {name} behind the ears. It leans into your hand.",
+            "{name} rolls over for a belly rub, and you oblige."),
+    "cat": ("You pet {name}. It purrs and arches into your hand.",
+            "{name} rubs against your legs, then pretends it didn't.",
+            "You scratch {name} under the chin. It blinks slowly at you."),
+}
 
 
 def describe(a: Actor) -> list[str]:

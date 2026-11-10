@@ -28,6 +28,8 @@ import numpy as np
 import tcod
 
 from . import biomes as B
+from . import elevation
+from . import items
 from . import farming
 from . import people
 from . import structures
@@ -74,7 +76,7 @@ def noises(seed: int) -> dict[str, tcod.noise.Noise]:
                                 implementation=tcod.noise.Implementation.FBM,
                                 octaves=octaves, seed=(seed * 7919 + n) & 0x7FFFFFFF)
     return {"jx": make(1, 3), "jy": make(2, 3), "detail": make(3, 3), "cluster": make(4, 2),
-            "ridge": make(5, 4)}
+            "ridge": make(5, 4), "height": make(6, 3)}
 
 
 def hash01(gx: np.ndarray, gy: np.ndarray, salt: int) -> np.ndarray:
@@ -221,14 +223,17 @@ def region_name(world, x: int, y: int) -> str:
 
 def generate_region(world, x: int, y: int) -> Level:
     gx0, gy0 = x * LOCAL_W - MARGIN, y * LOCAL_H - MARGIN
-    window, _ = terrain(world, gx0, gy0, LOCAL_W + 2 * MARGIN, LOCAL_H + 2 * MARGIN)
+    window, biome = terrain(world, gx0, gy0, LOCAL_W + 2 * MARGIN, LOCAL_H + 2 * MARGIN)
     draw_waterways(world, window, gx0, gy0)
+    height = elevation.heights(world, gx0, gy0, LOCAL_W + 2 * MARGIN, LOCAL_H + 2 * MARGIN, biome, window,
+                               noises(world.seed)["height"], LOCAL_W, LOCAL_H)
     inner = (slice(MARGIN, MARGIN + LOCAL_W), slice(MARGIN, MARGIN + LOCAL_H))
     site = world.site_at.get((x, y))
     level = Level(("region", x, y), region_name(world, x, y), window[inner].copy(),
-                  indoor_air=19.0 if site is not None and site.settled else 14.0)
+                  indoor_air=19.0 if site is not None and site.settled else 14.0, elev=height[inner].copy())
     if site is not None:
         structures.build(level, site, random.Random(world.region_seed(x, y)), farming.land_at(world, x, y))
+        level.elev = elevation.level_ground(level.elev, level.tiles)
     # Trees keep clear of every way in; then the crowns, from the trunks left standing here and
     # in the margin, so leaves reach across the border from trees in the next region.
     trees.clear_entrances(level.tiles, level.exits)
@@ -238,7 +243,18 @@ def generate_region(world, x: int, y: int) -> Level:
     trees.keep_clear(level.canopy, level.boughs, level.tiles, level.exits)
     if site is not None:
         people.populate(level, site, random.Random(world.region_seed(x, y) + 1))
+    bury(level, random.Random(world.region_seed(x, y) + 2), BURIED.get(site.kind if site else None, BURIED[None]))
     return level
+
+
+BURIED = {None: 1 / 150, "ruins": 1 / 50, "town": 1 / 250, "village": 1 / 200}   # share of open ground with something under it
+
+
+def bury(level: Level, rng: random.Random, share: float) -> None:
+    """Things lost and buried over the years, under open ground you could dig."""
+    spots = list(zip(*np.nonzero(T.DIGGABLE[level.tiles])))
+    for x, y in rng.sample(spots, min(len(spots), round(len(spots) * share))):
+        level.buried[(int(x), int(y))] = items.treasure(rng)
 
 
 def make_level(world, key: tuple) -> Level:

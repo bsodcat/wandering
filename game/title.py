@@ -44,7 +44,8 @@ MENU_HINTS = ["[↑] [↓] or [W] [S] choose   [Enter] select   [Esc] back   [Mo
 PLAY_HINTS = [
     "[Arrows] [WASD] [Numpad] move    [.] wait an hour    [Z] rest 8 hours",
     "[Enter] [>] go in, stairs down    [<] stairs up, back to the world",
-    "[V] treetops    [Tab] right panel    [C] stats    [O] overlays    [M] reveal map",
+    "[V] treetops    [Tab] right panel    [C] stats    [O] overlays, relief    [M] reveal map",
+    "[G] pick up    [X] dig    [I] inventory    walk into a tree with an axe to fell it",
     "Hold [Right mouse] walk there    [F11] fullscreen    [Esc] pause menu",
 ]
 CREATE_HINTS = ["[0]-[9] type a seed   [Backspace] erase   [R] random seed   [Enter] select   [Esc] back"]

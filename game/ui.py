@@ -8,8 +8,9 @@ more of the map.
 
 - Left: your stats (health, stamina, warmth, wetness and so on). `c` or its ◄ button hides
   it; the ► tab in the corner brings it back.
-- Right: three tabs, Info (where you are, the weather, what's under the pointer, the keys),
-  Map (a minimap) and Log (every message, scrollable). Tab cycles Info, Map, Log, hidden;
+- Right: four tabs, Info (where you are, the weather, what's under the pointer, the keys),
+  Map (a minimap), Log (every message, scrollable) and Inv (what you carry; i opens it). Tab
+  cycles Info, Map, Log, Inv, hidden;
   clicking a tab picks it, and its ► button hides the panel.
 - Along the bottom between them: the last few messages, over a darkened strip of map. It
   doesn't take the mouse, so you can still point at the map under it.
@@ -29,8 +30,8 @@ LEFT_W = 24                           # columns of the stats panel, border inclu
 RIGHT_W = 28                          # columns of the right panel, border included
 RIGHT_X = SCREEN_W - RIGHT_W          # where the right panel starts on a default-sized screen
 STRIP_H = 4                           # recent messages along the bottom
-TABS = ("info", "map", "log")
-TAB_NAMES = {"info": "Info", "map": "Map", "log": "Log"}
+TABS = ("info", "map", "log", "inv")
+TAB_NAMES = {"info": "Info", "map": "Map", "log": "Log", "inv": "Inv"}
 PANEL_KEY, STATS_KEY = KeySym.TAB, KeySym.C
 SCROLL_KEYS = {KeySym.PAGEUP: 10, KeySym.PAGEDOWN: -10, KeySym.HOME: 10_000, KeySym.END: -10_000}
 
@@ -103,7 +104,7 @@ class Panels:
         self.left_open = not self.left_open
 
     def cycle(self) -> None:
-        """Info, Map, Log, hidden, and round again."""
+        """Info, Map, Log, Inv, hidden, and round again."""
         if not self.right_open:
             self.right_open, self.tab = True, TABS[0]
         elif self.tab == TABS[-1]:
