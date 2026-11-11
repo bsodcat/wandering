@@ -62,7 +62,7 @@ TILES = [
     Tile(35, "cave wall", "#", (110, 100, 90), (55, 50, 45), walk=False, see=False, roof=True, natural=False),
     Tile(36, "stairs down", ">", (255, 230, 120), (50, 45, 40), minutes=0.6, natural=False),
     Tile(37, "stairs up", "<", (255, 230, 120), (50, 45, 40), minutes=0.6, natural=False),
-    Tile(38, "battlement", "▪", (175, 175, 180), (90, 90, 95), walk=False, natural=False),
+    Tile(38, "battlement", "■", (175, 175, 180), (90, 90, 95), walk=False, natural=False),
     Tile(39, "barrel", "o", (170, 120, 70), (60, 45, 30), walk=False, roof=True, natural=False),
     Tile(40, "dry grass", '"', (190, 175, 95), (90, 80, 40), minutes=0.8),
     Tile(41, "reeds", "|", (120, 160, 90), (40, 62, 40), minutes=1.4, soak=3),

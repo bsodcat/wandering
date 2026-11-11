@@ -86,6 +86,39 @@ def with_drawn_glyphs(tileset: tcod.tileset.Tileset) -> tcod.tileset.Tileset:
     return tileset
 
 
+def has_ink(tileset: tcod.tileset.Tileset, ch: str) -> bool:
+    return bool((tileset.get_tile(ord(ch))[..., 3] > 40).any())
+
+
+UNKNOWN = "?"           # how an item whose glyph isn't the same in every font is shown
+CP437 = frozenset(tcod.tileset.CHARMAP_CP437)
+
+
+def game_glyphs() -> set[str]:
+    """Every glyph an item or a tile is drawn with."""
+    from . import items
+    from . import tiles as T
+    return {k.char for k in items.KINDS.values()} | {t.char for t in T.TILES}
+
+
+def uncertain(tileset: tcod.tileset.Tileset, ch: str) -> bool:
+    """Whether a glyph might not look the same in every font: it's outside the standard set
+    every font draws (CP437), so some fonts have it and some leave it blank, or this font
+    leaves it blank anyway."""
+    return ord(ch) not in CP437 or not has_ink(tileset, ch)
+
+
+def with_fallbacks(tileset: tcod.tileset.Tileset) -> tcod.tileset.Tileset:
+    """Every glyph the game draws with that isn't sure to be the same in every font is shown
+    as a question mark instead, in every font, so nothing goes invisible or changes shape when
+    you change fonts. (No item or tile is drawn with a ? of its own.)"""
+    mark = np.ascontiguousarray(tileset.get_tile(ord(UNKNOWN))[..., 3])
+    for ch in sorted(game_glyphs()):
+        if ch.strip() and ch != UNKNOWN and uncertain(tileset, ch):
+            tileset.set_tile(ord(ch), mark)
+    return tileset
+
+
 def fit_truetype(path: str, w: int, h: int) -> tcod.tileset.Tileset:
     return with_drawn_glyphs(fit_letters(path, w, h))
 
@@ -114,7 +147,8 @@ def fit_letters(path: str, w: int, h: int) -> tcod.tileset.Tileset:
 
 def make_tileset(font: str, cell: tuple[int, int]) -> tcod.tileset.Tileset:
     """The font at this tile size: bitmap fonts use their nearest size, scaled; TrueType fonts
-    are drawn at the size. Falls back to Terminal, then to libtcod's own font."""
+    are drawn at the size. Falls back to Terminal, then to libtcod's own font. Glyphs that
+    aren't the same in every font are drawn as a ? (with_fallbacks)."""
     w, h = cell
     for name in [font] + [f for f in available_fonts() if f != font]:
         path = font_path(name)
@@ -125,11 +159,11 @@ def make_tileset(font: str, cell: tuple[int, int]) -> tcod.tileset.Tileset:
                 for code, tile in tiles.items():
                     tileset[tcod.tileset.CHARMAP_CP437[code]] = \
                         tile if (fw, fh) == (w, h) else scale_tile(tile, w, h)
-                return tileset
-            return fit_truetype(path, w, h)
+                return with_fallbacks(tileset)
+            return with_fallbacks(fit_truetype(path, w, h))
         except Exception:
             continue
-    return tcod.tileset.get_default()
+    return with_fallbacks(tcod.tileset.get_default())
 
 
 TITLE_BAR = 40            # room left for the title bar and borders before they're known

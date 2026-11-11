@@ -117,7 +117,7 @@ KINDS = {
     "rune-carved stone": Kind("rune-carved stone", "rune-carved stones", "♣", (140, 170, 160), "strange; what is it for?"),
     "tarnished amulet": Kind("tarnished amulet", "tarnished amulets", "♀", (150, 160, 120), "strange; what is it for?"),
     "vial of grave dust": Kind("vial of grave dust", "vials of grave dust", "!", (150, 140, 130), "strange; what is it for?"),
-    "sealed scroll": Kind("sealed scroll", "sealed scrolls", "?", (220, 205, 160), "strange; what is it for?"),
+    "sealed scroll": Kind("sealed scroll", "sealed scrolls", "~", (220, 205, 160), "strange; what is it for?"),
     "silver reliquary": Kind("silver reliquary", "silver reliquaries", "Φ", RING, "strange; what is it for?"),
     "obsidian mirror": Kind("obsidian mirror", "obsidian mirrors", "○", (70, 60, 90), "strange; what is it for?"),
 }
