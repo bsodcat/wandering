@@ -166,11 +166,16 @@ def populate(level, site, rng: random.Random) -> None:
         if job in ("innkeeper", "barkeeper"):
             if inn is None:
                 continue
-            beds = [c for c in inn.floor(t) if t[c] == T.BED]
-            home = beds[job == "barkeeper":][:1] or inn.floor(t)
+            # The beds are upstairs for guests: the barkeeper beds down behind the bar, the
+            # innkeeper by the hearth.
+            near = T.COUNTER if job == "barkeeper" else T.HEARTH
+            floor = [c for c in inn.floor(t) if t[c] not in (T.STAIRS_UP, T.STAIRS_DOWN)]
+            home = [c for c in floor if any(t[c[0] + dx, c[1] + dy] == near
+                                            for dx in (-1, 0, 1) for dy in (-1, 0, 1))] or floor
         elif houses:
             house = houses.pop()
             house.name = f"the {name.split()[1]} house"
+            house.owner = job
             home = [c for c in house.floor(t) if t[c] == T.BED] or house.floor(t)
         else:
             home = green

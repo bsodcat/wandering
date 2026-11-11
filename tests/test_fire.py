@@ -63,7 +63,7 @@ class FirelightTests(unittest.TestCase):
             x, y = next(zip(*np.nonzero(lvl.tiles == tile)))
             self.assertAlmostEqual(float(strength[x, y]), 1.0)
         far = np.ones(lvl.tiles.shape, bool)
-        for x, y in zip(*np.nonzero(np.isin(lvl.tiles, [T.HEARTH, T.TORCH]))):
+        for x, y in zip(*np.nonzero(np.isin(lvl.tiles, list(REACH)))):    # hearths, torches and ovens
             xs, ys = np.ogrid[: lvl.width, : lvl.height]
             far &= (xs - x) ** 2 + (2 * (ys - y)) ** 2 > max(REACH.values()) ** 2
         self.assertEqual(float(strength[far].max()), 0.0)

@@ -84,7 +84,7 @@ stairs lead nowhere; leave by Esc, then Main menu.
 | `g` | | pick up what's at your feet |
 | `x` | | dig where you stand (needs a shovel) |
 | `i` | the Inv tab: what you carry | same |
-| `e` | | the use menu: what you can do here and next to you (talk, trade, pet, attack, open a barrel, sleep, pick up, eat, wield, wear) |
+| `e` | | the use menu: what you can do here and next to you (talk, trade, pet, attack, open a barrel or chest, sleep, pick up, eat, wield, wear) |
 | walk into... | | a person: talk (or trade, if they trade); a dog or cat: pet it; a creature: strike it; a tree, with an axe: fell it |
 | Tab | right panel: Info, Map, Log, Inv, hidden | same |
 | `c` | show or hide the stats panel | same |
@@ -209,7 +209,7 @@ settlement, its people tell you about the land around it.
 
 ## Local maps
 
-Each region opens into a 96x48 local map (`game/localgen.py`), built the first time you go
+Each region opens into a 256x216 local map (`game/localgen.py`), built the first time you go
 there and kept with what you've explored.
 
 **Land** is a function of global tile coordinates, so neighbouring regions join without a seam:
@@ -290,7 +290,16 @@ something out of reach and you walk over to it first (a walk stops if a creature
 way: it never starts a fight). Clicking on plain ground still just notes it in the log.
 
 **Barrels** hold things: food in cellars and houses, odds and ends in sheds, loot in a goblin
-camp. Open one from the use menu to take things out or put things in; it keeps what you leave.
+camp. **Chests** sit in most houses and every shop, holding household things, the tools of
+the owner's trade (a fisherman's nets and hooks, a baker's flour and rolling pin, a butcher's
+salt and apron) and often coins or a trinket, now and then a family ring. Caves hide chests of
+coins, silver and gold nuggets and rough jewels, richer the deeper you go; crypts hide old coins
+and strange things (black candles, bone flutes, rune-carved stones, sealed scrolls...) that
+nobody will buy, whose use is yet to be learned.
+
+Open a barrel or chest from the use menu. It opens on two tabs: **Take** (what's inside) and
+**Put in** (what you carry). Switch with Left/Right, Tab or a click on the tab; Enter moves
+the whole of what's picked. It keeps what you leave.
 
 **Fighting** (`game/combat.py`). Walk into a creature to strike it. A blow lands by chance
 (the weapon's, less how nimble the creature is) and does the weapon's damage; blows at you are
@@ -380,7 +389,7 @@ the edges:
 
 | Site | Local map |
 | --- | --- |
-| Town | paved square with a well and market stalls, a named inn (bar, kegs, tables, beds, a sign by the door), a bakery with bread ovens, a butcher's with meat hooks, 11-16 houses with hearths, beds and tables, doors facing the square, streets to every door, vegetable gardens and a pasture outside, docks if it's a port, a lumber camp if it's wooded |
+| Town | paved square with a well and market stalls, a named inn (bar, kegs, tables, a hearth, a sign by the door; the beds are all upstairs), a bakery with bread ovens, a butcher's with meat hooks, 11-16 roomy houses with hearths, beds and tables (furniture never shuts anyone in), doors facing the square, streets to every door, vegetable gardens and a pasture outside, docks if it's a port, a lumber camp if it's wooded |
 | Village | a green with a well, 4-7 houses, paths, larger fields of the grain that suits the climate, a pasture or two, docks on the coast, a lumber camp if it's wooded |
 | Inn | a big named inn on the road, a paddock with horses, a well |
 | Tower | a round stone watchtower; stairs up to a room, then the roof, where you can see the land for miles around |
@@ -449,8 +458,8 @@ game/people.py     townsfolk and animals: who lives where, their hours, walking,
 game/wild.py       wolves, small game, bats and goblins: where they live, how they behave
 game/combat.py     weapons, armour, and how blows land
 game/sickness.py   wolf fever, soup and sleep
-game/items.py      things you carry, dig up and find in barrels
-game/shop.py       shops, the use menu and barrels
+game/items.py      things you carry, dig up and find in barrels and chests
+game/shop.py       shops, the use menu and containers (barrels, chests)
 game/farming.py    which grain and herd suit a climate, and the fields through the year
 game/light.py      firelight from hearths and torches, and how it flickers
 game/level.py      a local map, its stairs and its canopy layer

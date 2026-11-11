@@ -38,7 +38,7 @@ from . import trees
 from . import wild
 from .level import Level
 
-LOCAL_W, LOCAL_H = 96, 48
+LOCAL_W, LOCAL_H = 256, 216
 MARGIN = 6
 JITTER = 0.4          # how far, in regions, biome borders wander
 NODE_JITTER = 0.18    # how far, in regions, a node sits from its region's middle

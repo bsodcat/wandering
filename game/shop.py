@@ -10,7 +10,9 @@ Each is a list (Up/Down or the mouse picks, Enter takes it, Esc closes), long on
   - An innkeeper serves hot soup, which warms you, and treats wolf fever (game/sickness.py).
   - A town's shopkeeper sells common weapons and armour, and buys trinkets and rings.
 - A `Picker`: the use menu (e, or a click on something you can use: a barrel, a bed,
-  someone), and a barrel's contents (take things out, put things in).
+  someone).
+- A `Container`: what's in a barrel, on two tabs: Take (things out) and Put in (what you
+  carry). Left/Right, Tab or a click on a tab switches between them.
 """
 from __future__ import annotations
 
@@ -236,6 +238,103 @@ class Picker(Modal):
             return False
         self.refresh(engine)
         return True
+
+
+class Container(Modal):
+    """A barrel (or any other container): two tabs, one to take things out of it and one to
+    put what you carry in. Left/Right (or Tab, or a click on a tab) switches between them;
+    Enter moves the whole of what's picked."""
+    hint = "Left/Right tabs, Up/Down choose, Enter, Esc"
+    TABS = ("take", "put")
+    KEEP = ("room key",)              # never put away: it goes back to the barkeeper
+
+    def __init__(self, name: str, store, bag):
+        super().__init__()
+        self.name, self.store, self.bag = name, store, bag
+        self.title = name[0].upper() + name[1:]
+        self.leave = f"Close the {name.split()[-1]}"
+        self.leave_text = f"You close the {name.split()[-1]}."
+        self.tab = "take" if store else "put"
+
+    # ------------------------------------------------------------- what's on each tab
+
+    def putable(self) -> list[str]:
+        return [k for k in self.bag if k not in self.KEEP]
+
+    def rows_for(self, tab: str) -> list[tuple[str, str | None]]:
+        """(label, kind) for each row on a tab; kind "*" moves everything, None closes."""
+        if tab == "take":
+            rows = [(f"Take {items.amount(k, n)}", k) for k, n in self.store.items()]
+            if len(rows) > 1:
+                rows.append(("Take everything", "*"))
+        else:
+            rows = [(f"Put in {items.amount(k, self.bag.count(k))}", k) for k in self.putable()]
+            if len(rows) > 1:
+                rows.append(("Put in everything", "*"))
+        return rows + [(self.leave, None)]
+
+    def labels(self) -> list[str]:
+        return [label for label, _ in self.rows_for(self.tab)]
+
+    @property
+    def greeting(self) -> str:
+        if self.tab == "take":
+            return ("Inside: " + items.describe_pile(self.store) + ".") if self.store else "It's empty."
+        return "You carry nothing you could put in." if not self.putable() else \
+            f"Put things in the {self.name.split()[-1]}."
+
+    def tab_labels(self) -> list[str]:
+        return [f" Take ({sum(self.store.values())}) ",
+                f" Put in ({sum(self.bag.count(k) for k in self.putable())}) "]
+
+    def tab_spans(self) -> list[tuple[str, int, int]]:
+        """(tab, x, width) of each tab along the top of the box."""
+        x = self.box()[0] + 2
+        out = []
+        for tab, label in zip(self.TABS, self.tab_labels()):
+            out.append((tab, x, len(label)))
+            x += len(label) + 1
+        return out
+
+    def switch(self, tab: str | None = None) -> None:
+        self.tab = tab or self.TABS[1 - self.TABS.index(self.tab)]
+        self.cursor = self.top = 0
+
+    # ------------------------------------------------------------- doing it
+
+    def move(self, kind: str, engine) -> str:
+        taking = self.tab == "take"
+        src, dst = (self.store, self.bag) if taking else (self.bag, self.store)
+        verb = "take" if taking else "put in"
+        kinds = (list(src) if taking else self.putable()) if kind == "*" else [kind]
+        moved = {k: src.count(k) for k in kinds if src.count(k)}
+        for k, n in moved.items():
+            src.take(k, n)
+            dst.add(k, n)
+        return f"You {verb} {items.describe_pile(moved)}." if moved else ""
+
+    def act(self, engine) -> bool:
+        rows = self.rows_for(self.tab)
+        _, kind = rows[min(self.cursor, len(rows) - 1)]
+        if kind is None:
+            return False
+        self.note(self.move(kind, engine), engine)
+        self.scroll()
+        return True
+
+    def handle_key(self, sym, engine) -> bool:
+        if sym in (KeySym.LEFT, KeySym.RIGHT, KeySym.TAB, KeySym.KP_4, KeySym.KP_6, KeySym.A, KeySym.D):
+            self.switch()
+            return True
+        return super().handle_key(sym, engine)
+
+    def click(self, sx: int, sy: int, engine) -> bool:
+        if sy == self.box()[1] + 1:
+            for tab, x, w in self.tab_spans():
+                if x <= sx < x + w:
+                    self.switch(tab)
+            return True
+        return super().click(sx, sy, engine)
 
 
 # ----------------------------------------------------------------- the traders

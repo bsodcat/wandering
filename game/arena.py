@@ -48,7 +48,7 @@ GALLERY = [   # (row name, tiles) - every tile appears here once
     ("building", [T.WOOD_FLOOR, T.STONE_FLOOR, T.CAVE_FLOOR, T.WALL, T.STONE_WALL, T.CAVE_WALL, T.DOOR,
                   T.FENCE, T.BATTLEMENT, T.TORCH, T.SIGN, T.STAIRS_DOWN, T.STAIRS_UP]),
     ("furniture", [T.BED, T.TABLE, T.HEARTH, T.BARREL, T.WELL, T.STALL, T.OVEN, T.COUNTER, T.HOOKS,
-                   T.WOODPILE, T.TROUGH, T.BEDROLL, T.RACK]),
+                   T.WOODPILE, T.TROUGH, T.BEDROLL, T.RACK, T.CHEST]),
     ("fields", [T.CROPS, T.WHEAT, T.RYE, T.RICE, T.MILLET]),
 ]
 GALLERY_TOP = 100

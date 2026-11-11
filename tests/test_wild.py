@@ -506,10 +506,71 @@ class UseMenuTests(unittest.TestCase):
         e.handle_key(KeySym.RETURN)
         self.assertEqual(e.player.inventory.count("apple"), 2)
         self.assertFalse(lv.stores[(31, 15)])
+        self.assertFalse(any("apple" in l for l in e.shop.labels()))   # the Take tab only takes
+        e.handle_key(KeySym.RIGHT)                                       # over to Put in
+        self.assertEqual(e.shop.tab, "put")
         put = next(i for i, l in enumerate(e.shop.labels()) if "apple" in l)
         e.shop.cursor = put
         e.handle_key(KeySym.RETURN)
         self.assertEqual(lv.stores[(31, 15)].count("apple"), 2)
+
+    def test_chests_open_in_the_same_tabbed_box(self):
+        lv = field()
+        lv.tiles[31, 15] = T.CHEST
+        e = engine_on(lv)
+        e.click_at(31, 15)
+        e.shop.cursor = e.shop.labels().index("Open the chest")
+        e.handle_key(KeySym.RETURN)
+        self.assertEqual(e.shop.title, "A chest")
+        self.assertEqual(e.shop.leave, "Close the chest")
+        self.assertIs(e.shop.store, lv.stores[(31, 15)])
+
+    def test_what_chests_hold_suits_where_they_are(self):
+        from game.level import Building
+        lv = field()
+        lv.tiles[31, 15] = T.CHEST
+        lv.buildings.append(Building("house", "the Reed house", 28, 12, 8, 6, (28, 14), owner="fisherman"))
+        got = items.fill_chest(lv, 31, 15)
+        self.assertTrue(set(got) & set(items.TRADE_GOODS["fisherman"]), got)
+        self.assertEqual(items.fill_chest(lv, 31, 15), got)                      # the same every time
+        cave, crypt = field(), field()
+        for lvl, key in ((cave, ("cave", 3, 4, 3)), (crypt, ("crypt", 3, 4, 1))):
+            lvl.key = key
+            lvl.tiles[31, 15] = T.CHEST
+        found = items.fill_chest(cave, 31, 15)
+        self.assertTrue(set(found) & set(items.GEMS), found)
+        self.assertTrue(set(found) & {"gold nugget", "silver nugget"}, found)
+        self.assertTrue(set(items.fill_chest(crypt, 31, 15)) & set(items.CURIOS))
+        self.assertFalse(any(items.KINDS[k].value for k in items.CURIOS))       # nobody buys them
+
+    def test_barrel_tabs_switch_by_click_and_keep_the_room_key(self):
+        lv = field()
+        lv.tiles[31, 15] = T.BARREL
+        lv.stores[(31, 15)] = items.Inventory()
+        e = engine_on(lv)
+        e.player.inventory.add("room key", 1)
+        e.player.inventory.add("log", 3)
+        e.open_barrel(31, 15)
+        box = e.shop
+        self.assertEqual(box.tab, "put")                        # an empty barrel opens on Put in
+        self.assertFalse(any("room key" in l for l in box.labels()))
+        take = next(s for s in box.tab_spans() if s[0] == "take")
+        self.assertTrue(box.click(take[1] + 1, box.box()[1] + 1, e))
+        self.assertEqual(box.tab, "take")
+        self.assertEqual(box.labels(), ["Close the barrel"])
+        box.handle_key(KeySym.TAB, e)
+        box.cursor = box.labels().index("Put in 3 logs")
+        box.handle_key(KeySym.RETURN, e)
+        self.assertEqual(lv.stores[(31, 15)].count("log"), 3)
+        self.assertEqual(e.player.inventory.count("room key"), 1)
+        import tcod
+        from game.render import draw
+        console = tcod.console.Console(120, 45, order="F")
+        draw(console, e, 1.0)
+        text = "".join(chr(c) for c in console.rgb["ch"].T.flatten())
+        self.assertIn("Take (3)", text)
+        self.assertIn(f"Put in ({e.player.inventory.count('coin')})", text)   # the key isn't counted
+        self.assertIn(box.hint, text)                                           # fits inside the box
 
     def test_a_click_far_off_walks_you_over_first(self):
         lv = field()

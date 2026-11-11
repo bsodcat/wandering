@@ -2,7 +2,7 @@
 
 Items are kinds (an axe, a log, a coin) and how many. They lie on a level's tiles
 (`Level.items`), sometimes under the ground (`Level.buried`, found by digging), sit in barrels
-(`Level.stores`), and you carry them in your `Inventory`. Some are tools that let you do things:
+and chests (`Level.stores`), and you carry them in your `Inventory`. Some are tools that let you do things:
 
 - an axe:    walk into a tree to fell it, and cut logs (one leans by every lumberjack's house)
 - a shovel:  dig (x) the ground you're standing on for what's buried there (there's one in a
@@ -78,9 +78,48 @@ KINDS = {
     "glass marble": Kind("glass marble", "glass marbles", "*", (130, 200, 220), "a trinket", value=2),
     "old buckle": Kind("old buckle", "old buckles", "*", (160, 150, 130), "a trinket", value=1),
     "bone charm": Kind("bone charm", "bone charms", "*", (225, 215, 170), "a goblin trinket", value=2),
-    # precious: only ever found under towns
+    # precious: only ever found under towns, or in a chest
     "silver ring": Kind("silver ring", "silver rings", "○", RING, "worth a good deal", value=15),
     "gold ring": Kind("gold ring", "gold rings", "○", (245, 200, 70), "worth a great deal", value=35),
+    # household things, kept in chests at home
+    "candle": Kind("candle", "candles", "¡", (240, 230, 190), "household goods"),
+    "wool blanket": Kind("wool blanket", "wool blankets", "≡", (170, 150, 130), "household goods"),
+    "wooden spoon": Kind("wooden spoon", "wooden spoons", "/", (190, 150, 100), "household goods"),
+    "spool of thread": Kind("spool of thread", "spools of thread", "°", (200, 180, 200), "household goods"),
+    "clay cup": Kind("clay cup", "clay cups", "u", (200, 130, 90), "household goods"),
+    "bar of soap": Kind("bar of soap", "bars of soap", "▪", (225, 220, 180), "household goods"),
+    # the tools and stuff of a trade, kept in a chest at the worker's house or shop
+    "seed pouch": Kind("seed pouch", "seed pouches", "°", (170, 150, 90), "a farmer's"),
+    "horseshoe": Kind("horseshoe", "horseshoes", "∩", (165, 165, 175), "a farmer's", value=1),
+    "ball of twine": Kind("ball of twine", "balls of twine", "°", (200, 175, 120), "a farmer's"),
+    "fishing net": Kind("fishing net", "fishing nets", "#", (170, 185, 170), "a fisherman's", value=1),
+    "fish hook": Kind("fish hook", "fish hooks", "¿", (180, 185, 195), "a fisherman's"),
+    "coil of rope": Kind("coil of rope", "coils of rope", "§", (190, 160, 110), "rope", value=1),
+    "whetstone": Kind("whetstone", "whetstones", "▬", (150, 150, 160), "for sharpening blades", value=1),
+    "iron nails": Kind("iron nails", "iron nails", "¦", (160, 160, 170), "a lumberjack's"),
+    "sack of flour": Kind("sack of flour", "sacks of flour", "♠", (235, 230, 215), "a baker's", value=1),
+    "rolling pin": Kind("rolling pin", "rolling pins", "─", (200, 160, 110), "a baker's"),
+    "pouch of salt": Kind("pouch of salt", "pouches of salt", "°", (235, 235, 235), "a butcher's", value=1),
+    "butcher's apron": Kind("butcher's apron", "butcher's aprons", "[", (210, 190, 180), "a butcher's"),
+    "flask of oil": Kind("flask of oil", "flasks of oil", "!", (200, 180, 90), "for keeping steel bright", value=1),
+    "iron rivets": Kind("iron rivets", "iron rivets", "¦", (175, 175, 185), "an armourer's"),
+    # what's hidden deep in caves
+    "silver nugget": Kind("silver nugget", "silver nuggets", "•", RING, "raw silver", value=6),
+    "gold nugget": Kind("gold nugget", "gold nuggets", "•", (245, 200, 70), "raw gold", value=12),
+    "rough garnet": Kind("rough garnet", "rough garnets", "♦", (170, 40, 50), "a jewel", value=8),
+    "raw amethyst": Kind("raw amethyst", "raw amethysts", "♦", (160, 90, 200), "a jewel", value=10),
+    "uncut emerald": Kind("uncut emerald", "uncut emeralds", "♦", (60, 190, 110), "a jewel", value=20),
+    "sapphire": Kind("sapphire", "sapphires", "♦", (70, 110, 230), "a fine jewel", value=25),
+    "ruby": Kind("ruby", "rubies", "♦", (230, 40, 60), "a fine jewel", value=30),
+    # strange things from the crypts: nobody buys them, and what they're for is yet to be learned
+    "black candle": Kind("black candle", "black candles", "¡", (90, 80, 100), "strange; what is it for?"),
+    "bone flute": Kind("bone flute", "bone flutes", "¦", (225, 220, 195), "strange; what is it for?"),
+    "rune-carved stone": Kind("rune-carved stone", "rune-carved stones", "♣", (140, 170, 160), "strange; what is it for?"),
+    "tarnished amulet": Kind("tarnished amulet", "tarnished amulets", "♀", (150, 160, 120), "strange; what is it for?"),
+    "vial of grave dust": Kind("vial of grave dust", "vials of grave dust", "!", (150, 140, 130), "strange; what is it for?"),
+    "sealed scroll": Kind("sealed scroll", "sealed scrolls", "?", (220, 205, 160), "strange; what is it for?"),
+    "silver reliquary": Kind("silver reliquary", "silver reliquaries", "Φ", RING, "strange; what is it for?"),
+    "obsidian mirror": Kind("obsidian mirror", "obsidian mirrors", "○", (70, 60, 90), "strange; what is it for?"),
 }
 TRINKETS = ["brass button", "clay bead", "tin whistle", "bone die", "copper bangle", "carved figurine",
             "glass marble", "old buckle"]
@@ -90,6 +129,19 @@ CARCASSES = [k for k in KINDS if k.endswith(" carcass")]
 TREASURE = [("coin", 0.4, (1, 6)), ("trinket", 0.22, (1, 1)), ("pottery shard", 0.15, (1, 1)),
             ("arrowhead", 0.11, (1, 1)), ("old bone", 0.08, (1, 1)), ("rusty dagger", 0.04, (1, 1))]
 PRECIOUS = [("silver ring", 0.06, (1, 1)), ("gold ring", 0.025, (1, 1))]   # under towns only
+HOUSEHOLD = ["candle", "wool blanket", "wooden spoon", "spool of thread", "clay cup", "bar of soap"]
+TRADE_GOODS = {     # a worker -> what they keep in their chest
+    "farmer": ["seed pouch", "horseshoe", "ball of twine", "apple"],
+    "fisherman": ["fishing net", "fish hook", "coil of rope", "salt fish"],
+    "lumberjack": ["whetstone", "iron nails", "coil of rope", "log"],
+    "baker": ["sack of flour", "rolling pin", "loaf of bread"],
+    "butcher": ["pouch of salt", "butcher's apron", "roast meat"],
+    "shopkeeper": ["whetstone", "flask of oil", "iron rivets"],
+}
+SHOP_KEEPER = {"bakery": "baker", "butcher": "butcher", "armoury": "shopkeeper"}
+GEMS = ["rough garnet", "raw amethyst", "uncut emerald", "sapphire", "ruby"]   # commonest first
+CURIOS = ["black candle", "bone flute", "rune-carved stone", "tarnished amulet", "vial of grave dust",
+          "sealed scroll", "silver reliquary", "obsidian mirror"]
 
 
 def amount(kind: str, n: int) -> str:
@@ -175,4 +227,53 @@ def fill_barrel(level, x: int, y: int) -> Inventory:
         bag.add(rng.choice(["apple", "salt fish", "log", rng.choice(TRINKETS)]))
     if rng.random() < 0.15:
         bag.add("coin", rng.randint(1, 4))
+    return bag
+
+
+# ----------------------------------------------------------------- chests
+
+def fill_chest(level, x: int, y: int) -> Inventory:
+    """What's in a chest the first time it's opened. The same every game.
+
+    - at home: household things and the tools of the owner's trade, sometimes coins or a trinket
+      (now and then a family ring)
+    - in a shop: the stuff of the trade and the takings
+    - in a cave: gold and silver and rough jewels, richer the deeper you go
+    - in a crypt: old coins and strange things whose use is yet to be learned
+    """
+    rng = random.Random(f"chest{level.key}{x},{y}")
+    bag = Inventory()
+    kind, depth = level.key[0], (level.key[3] if len(level.key) > 3 else 0)
+    if kind == "cave":
+        bag.add("coin", rng.randint(5, 15) * depth)
+        for _ in range(rng.randint(1, 2) + depth // 2):
+            bag.add(rng.choice(["silver nugget", "silver nugget", "gold nugget"]))
+        for _ in range(rng.randint(1, 1 + depth)):
+            bag.add(GEMS[min(len(GEMS) - 1, int(rng.random() ** 1.5 * (2 + depth)))])
+        return bag
+    if kind == "crypt":
+        for k in rng.sample(CURIOS, rng.randint(1, 2)):
+            bag.add(k)
+        if rng.random() < 0.6:
+            bag.add("coin", rng.randint(4, 18))
+        if rng.random() < 0.3:
+            bag.add(rng.choice(TRINKETS + ["old bone", "old bone"]))
+        if rng.random() < 0.1:
+            bag.add(rng.choice(["silver ring", "gold ring"]))
+        return bag
+    inside = level.building_at(x, y)
+    owner = getattr(inside, "owner", "") or SHOP_KEEPER.get(getattr(inside, "kind", ""), "")
+    shop = inside is not None and inside.kind in SHOP_KEEPER
+    goods = TRADE_GOODS.get(owner, [])
+    for k in rng.sample(goods, min(len(goods), rng.randint(1, 2 + shop))):
+        bag.add(k, rng.randint(1, 3) if k in FOODS or k == "log" or k.endswith(("nails", "rivets", "hook")) else 1)
+    if not shop:
+        for k in rng.sample(HOUSEHOLD, rng.randint(1, 2)):
+            bag.add(k)
+    if rng.random() < (0.9 if shop else 0.5):
+        bag.add("coin", rng.randint(5, 20) if shop else rng.randint(2, 10))
+    if rng.random() < 0.35:
+        bag.add(rng.choice(TRINKETS))
+    if rng.random() < 0.06 and not shop:                     # a family heirloom
+        bag.add(rng.choice(["silver ring", "silver ring", "gold ring"]))
     return bag

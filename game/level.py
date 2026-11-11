@@ -23,6 +23,7 @@ class Building:
     w: int
     h: int
     door: tuple
+    owner: str = ""            # the job of whoever lives here (game/people.py), for what's in their chest
 
     def contains(self, x: int, y: int) -> bool:
         return self.x0 <= x < self.x0 + self.w and self.y0 <= y < self.y0 + self.h

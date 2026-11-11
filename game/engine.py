@@ -517,40 +517,17 @@ class Engine:
         return text
 
     def open_barrel(self, x: int, y: int) -> None:
-        """What's in a barrel: take things out, put things in."""
+        """What's in a barrel or a chest: a tab to take things out, a tab to put things in."""
         level = self.level
+        chest = level.tiles[x, y] == T.CHEST
         store = level.stores.get((x, y))
         if store is None:
-            store = level.stores[(x, y)] = items.fill_barrel(level, x, y)
-        bag = self.player.inventory
-
-        def shift(src, dst, kind, verb):
-            n = src.count(kind)
-            src.take(kind, n)
-            dst.add(kind, n)
-            return f"You {verb} {items.amount(kind, n)}."
-
-        def take_all(e):
-            got = dict(store)
-            for k, n in got.items():
-                bag.add(k, n)
-            store.clear()
-            return f"You take {items.describe_pile(got)}."
-
-        def build(e):
-            picker.greeting = ("Inside: " + items.describe_pile(store) + ".") if store else "It's empty."
-            opts = [shops.Option(f"Take {items.amount(k, n)}", lambda e, k=k: shift(store, bag, k, "take"), stay=True)
-                    for k, n in store.items()]
-            if len(store) > 1:
-                opts.append(shops.Option("Take everything", take_all, stay=True))
-            opts += [shops.Option(f"Put in {items.amount(k, n)}", lambda e, k=k: shift(bag, store, k, "put in"),
-                                  stay=True) for k, n in bag.items() if k != "room key"]
-            return opts
-
-        picker = shops.Picker("A barrel", build, leave="Close the barrel", leave_text="You close the barrel.")
-        picker.refresh(self)
-        self.shop = picker
+            fill = items.fill_chest if chest else items.fill_barrel
+            store = level.stores[(x, y)] = fill(level, x, y)
+        self.shop = shops.Container("a chest" if chest else "a barrel", store, self.player.inventory)
         self.autopath = False
+
+    open_container = open_barrel
 
     def use_menu(self) -> None:
         """e: everything you can do here and next to you."""
@@ -610,8 +587,8 @@ class Engine:
                                             lambda e, a=a: go(a.x, a.y, lambda e: e.trade_with(a), who=a)))
                 out.append(shops.Option(f"Talk to {first}", lambda e, a=a: go(a.x, a.y, lambda e: e.talk_to(a), who=a)))
         tile = int(level.tiles[x, y])
-        if tile == T.BARREL:
-            out.append(shops.Option("Open the barrel", lambda e: go(x, y, lambda e: e.open_barrel(x, y))))
+        if tile in T.CONTAINERS:
+            out.append(shops.Option(f"Open the {T.TILES[tile].name}", lambda e: go(x, y, lambda e: e.open_barrel(x, y))))
         if tile in (T.BED, T.BEDROLL):
             inn = level.key[0] == "inn_up" and p.inventory.count("room key")
             out.append(shops.Option("Sleep in the bed till morning" if inn else f"Rest on the {T.TILES[tile].name}",
@@ -922,7 +899,7 @@ class Engine:
         beast = wild.creature_at(level, x, y)
         if beast is not None and self.local_visible[x, y] and not here:
             lines = wild.describe(beast) + lines
-        if level.stores.get((x, y)) is not None and tile.id == T.BARREL:
+        if level.stores.get((x, y)) is not None and tile.id in T.CONTAINERS:
             lines.append("Holds " + items.describe_pile(level.stores[(x, y)]))
         inside = level.building_at(x, y)
         if inside is not None and inside.name:

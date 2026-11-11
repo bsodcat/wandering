@@ -74,7 +74,7 @@ class BuildingTests(unittest.TestCase):
             self.assertTrue(inn.name.startswith("The "), inn.name)
             inside = lvl.tiles[inn.x0: inn.x0 + inn.w, inn.y0: inn.y0 + inn.h]
             self.assertGreaterEqual((inside == T.COUNTER).sum(), 3)
-            self.assertGreaterEqual((inside == T.BED).sum(), 3)
+            self.assertFalse((inside == T.BED).any())      # the beds are upstairs
             self.assertTrue((inside == T.SIGN).any())
             for kind, tile in (("bakery", T.OVEN), ("butcher", T.HOOKS)):
                 b = kinds[kind]

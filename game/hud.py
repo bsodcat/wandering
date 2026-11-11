@@ -417,8 +417,14 @@ def draw_shop(console: tcod.console.Console, e: Engine) -> None:
     console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
     title = f" {shop.title[: w - 4]} "
     console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
-    for i, line in enumerate(textwrap.wrap(shop.greeting, w - 4)[:2]):
-        console.print(x + 2, y + 1 + i, line, fg=DIM, bg=PANEL_BG)
+    if hasattr(shop, "tab_spans"):          # a container: its tabs, then one line about it
+        for (tab, tx, tw), label in zip(shop.tab_spans(), shop.tab_labels()):
+            on = tab == shop.tab
+            console.print(tx, y + 1, label, fg=TAB_ON if on else DIM, bg=HEADER_BG if on else PANEL_BG)
+        console.print(x + 2, y + 2, shop.greeting[: w - 4], fg=DIM, bg=PANEL_BG)
+    else:
+        for i, line in enumerate(textwrap.wrap(shop.greeting, w - 4)[:2]):
+            console.print(x + 2, y + 1 + i, line, fg=DIM, bg=PANEL_BG)
     labels = shop.labels()
     rows = shop.visible_rows()
     for i in rows:

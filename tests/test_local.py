@@ -178,7 +178,31 @@ class StructureTests(unittest.TestCase):
     def test_inns(self):
         for seed, inn in sites("inn")[:3]:
             lvl = self.check_doors_reachable(seed, inn, 1)
-            self.assertGreaterEqual((lvl.tiles == T.BED).sum(), 3)
+            b = next(b for b in lvl.buildings if b.kind == "inn")
+            self.assertFalse(any(lvl.tiles[c] == T.BED for c in b.floor(lvl.tiles)), inn)   # beds are upstairs
+            up = make_level(world(seed), ("inn_up", inn.x, inn.y, 1))
+            self.assertGreaterEqual((up.tiles == T.BED).sum(), 3)
+
+    def test_chests_in_homes_shops_caves_and_crypts(self):
+        seed, s = sites("town", (1,))[0]
+        town = level(seed, ("region", s.x, s.y))
+        homes = [b for b in town.buildings if b.kind in ("house", "bakery", "butcher", "armoury")]
+        with_chest = [b for b in homes if any(town.tiles[x, y] == T.CHEST for x in range(b.x0, b.x0 + b.w)
+                                              for y in range(b.y0, b.y0 + b.h))]
+        self.assertGreater(len(with_chest), len(homes) // 2)
+        for kind, sub in (("cave", "cave"), ("ruins", "crypt")):
+            seed, s = sites(kind)[0]
+            lvl = make_level(world(seed), (sub, s.x, s.y, 1))
+            self.assertTrue((lvl.tiles == T.CHEST).any(), kind)
+            walk = T.WALK[lvl.tiles]
+            self.assertEqual(S.largest_area(walk).sum(), walk.sum(), kind)   # nothing cut off
+
+    def test_no_room_is_shut_off_from_its_door(self):
+        for seed, s in sites("town", (1, 2))[:4] + sites("village", (1, 2))[:4] + sites("inn", (1, 2))[:3]:
+            lvl = level(seed, ("region", s.x, s.y))
+            for b in lvl.buildings:
+                self.assertTrue(S.all_reachable(lvl.tiles, b.x0, b.y0, b.x0 + b.w - 1, b.y0 + b.h - 1),
+                                (s.name, b.kind))
 
     def test_ports_get_docks(self):
         ports = [(seed, s) for seed in (1, 2, 3) for s in world(seed).sites if s.port]

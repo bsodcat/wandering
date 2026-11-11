@@ -13,10 +13,16 @@ from the world map all lead into the middle of a settlement, so places grow outw
 
 Every inn, in a town or by the road, has stairs up to a floor of guest rooms (a corridor, a
 bed in each room; the barkeeper lets them for the night) and down to a cellar of barrels.
+The beds are only up there: the common room downstairs has none.
+
+No furniture is ever put down where it would shut part of a room off from its door.
 
 Every building is kept on the level (kind, name, box, door), and so is every place someone
 works or something grazes (fields, pastures, the pier, a fishing spot on the shore, the lumber
 camp): game/people.py puts the townsfolk and their animals there.
+- chests:  most houses keep one (household things and the tools of the owner's trade), each
+           shop has one (its takings); caves hide gold and jewels in theirs, crypts strange
+           things (game/items.py fills them when they're first opened)
 - tower:   a round stone watchtower; stairs climb to a room and then the roof
 - ruins:   tumbled stone buildings, overgrown, one with stairs down to a crypt
 - cave:    a rocky outcrop with a way down into one to three cave levels
@@ -110,10 +116,55 @@ def hang_torch(level: Level, rng: random.Random, door, side, box=None, tile: int
             return
 
 
+def inside_door(t: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> tuple[int, int] | None:
+    """The floor tile just inside a building's door (box inclusive), or None if it has no door."""
+    for x in range(x0, x1 + 1):
+        for y in range(y0, y1 + 1):
+            if (x in (x0, x1) or y in (y0, y1)) and t[x, y] == T.DOOR:
+                return (x + (x == x0) - (x == x1), y + (y == y0) - (y == y1))
+    return None
+
+
+def all_reachable(t: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> bool:
+    """Whether every tile you can stand on inside the box (inclusive) can be reached from the
+    door, stepping straight (not squeezing diagonally between two pieces of furniture)."""
+    start = inside_door(t, x0, y0, x1, y1)
+    walk = T.WALK[t[x0 + 1: x1, y0 + 1: y1]]
+    if start is None:
+        return True
+    sx, sy = start[0] - x0 - 1, start[1] - y0 - 1
+    if not walk[sx, sy]:
+        return False
+    seen = np.zeros(walk.shape, bool)
+    seen[sx, sy] = True
+    stack = [(sx, sy)]
+    while stack:
+        x, y = stack.pop()
+        for dx, dy in DIRS4:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < walk.shape[0] and 0 <= ny < walk.shape[1] and walk[nx, ny] and not seen[nx, ny]:
+                seen[nx, ny] = True
+                stack.append((nx, ny))
+    return bool((seen == walk).all())
+
+
+def put_inside(t: np.ndarray, c: tuple[int, int], tile: int, box: tuple[int, int, int, int]) -> bool:
+    """Puts a piece of furniture down unless it would wall off any part of the room from the
+    door. Returns whether it went down."""
+    old = t[c]
+    t[c] = tile
+    if T.WALK[tile] or all_reachable(t, *box):
+        return True
+    t[c] = old
+    return False
+
+
 def furnish(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, beds: int = 1,
             hearth: bool = True, tables: int = 1, barrels: int = 0, extra=(), middle=T.TABLE) -> None:
-    """Furniture against the inside walls, leaving the tiles by the door clear."""
+    """Furniture against the inside walls, leaving the tiles by the door clear and never
+    shutting anyone off from the door."""
     t = level.tiles
+    box = (x0, y0, x0 + w - 1, y0 + h - 1)
     inside = [(x, y) for x in range(x0 + 1, x0 + w - 1) for y in range(y0 + 1, y0 + h - 1)]
     def by_door(x, y):
         return any(t[x + dx, y + dy] == T.DOOR for dx in (-1, 0, 1) for dy in (-1, 0, 1))
@@ -122,14 +173,14 @@ def furnish(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, 
     rng.shuffle(walls)
     for tile, count in ((T.HEARTH, int(hearth)), (T.BED, beds), (T.BARREL, barrels), *extra):
         for _ in range(count):
-            if walls:
-                t[walls.pop()] = tile
-    middle_tiles = [c for c in inside if c not in walls and t[c] == T.WOOD_FLOOR and not by_door(*c)
+            while walls and not put_inside(t, walls.pop(), tile, box):
+                pass
+    middle_tiles = [c for c in inside if t[c] == T.WOOD_FLOOR and not by_door(*c)
                     and c[0] not in (x0 + 1, x0 + w - 2) and c[1] not in (y0 + 1, y0 + h - 2)]
     rng.shuffle(middle_tiles)
     for _ in range(tables):
-        if middle_tiles:
-            t[middle_tiles.pop()] = middle
+        while middle_tiles and not put_inside(t, middle_tiles.pop(), middle, box):
+            pass
 
 
 def place_box(level: Level, rng: random.Random, sizes, ring, centre=None, tries: int = 200, margin: int = 1):
@@ -193,7 +244,7 @@ def square(level: Level, rx: int, ry: int, stalls: int) -> None:
             t[x, y] = T.STALL
 
 
-def houses(level: Level, rng: random.Random, count: int, ring, sizes=((5, 8), (4, 6))) -> list:
+def houses(level: Level, rng: random.Random, count: int, ring, sizes=((7, 10), (5, 7))) -> list:
     cx, cy = middle(level)
     doors = []
     for _ in range(count):
@@ -202,7 +253,8 @@ def houses(level: Level, rng: random.Random, count: int, ring, sizes=((5, 8), (4
             continue
         x0, y0, w, h = box
         door, outside = building(level, rng, x0, y0, w, h, (cx, cy))
-        furnish(level, rng, x0, y0, w, h, beds=rng.randint(1, 2), tables=1, barrels=rng.randint(0, 1))
+        chest = ((T.CHEST, 1),) if rng.random() < 0.8 else ()
+        furnish(level, rng, x0, y0, w, h, beds=rng.randint(1, 2), tables=1, barrels=rng.randint(0, 1), extra=chest)
         doors.append(outside)
     return doors
 
@@ -350,40 +402,43 @@ def inn_name(rng: random.Random) -> str:
 
 def inn_building(level: Level, rng: random.Random, ring, sizes=((13, 15), (7, 8))):
     """A big common room: a bar along the wall across from the door with kegs at its ends, a
-    hearth, tables in the middle and beds for travellers along the side walls, a sign and a
-    torch by the door. Returns the tile outside the door, or None if it didn't fit."""
-    box = place_box(level, rng, sizes, ring) or         place_box(level, rng, ((12, 13), (7, 7)), (ring[0], ring[1] + 12))   # smaller, further out
+    hearth and benches by the side walls, tables in the middle, a sign and a torch by the door.
+    The beds are all upstairs (inn_upstairs). Returns the tile outside the door, or None if it
+    didn't fit."""
+    box = (place_box(level, rng, sizes, ring)
+           or place_box(level, rng, ((12, 13), (7, 7)), (ring[0], ring[1] + 12)))   # smaller, further out
     if box is None:
         return None
     x0, y0, w, h = box
     x1, y1 = x0 + w - 1, y0 + h - 1
     door, outside = building(level, rng, x0, y0, w, h, middle(level), kind="inn", name=inn_name(rng), sign=True)
     t = level.tiles
+    inn_stairs(level, x0, y0, x1, y1, door)     # first, so the furniture keeps a way to them
     if door[0] in (x0, x1):              # door on a side wall: the bar runs down the far one
         bx = x0 + 1 if door[0] == x1 else x1 - 1
         mid = (y0 + y1) // 2
         bar = [(bx, y) for y in range(mid - 1, mid + 2)]
         kegs = [(bx, mid - 2), (bx, mid + 2)]
-        beds = [(x, y) for x in range(x0 + 2, x1 - 1, 2) for y in (y0 + 1, y1 - 1)]
+        sides = [(x, y) for x in range(x0 + 2, x1 - 1, 2) for y in (y0 + 1, y1 - 1)]
     else:                                # door on the top or bottom: the bar runs along the other
         by = y0 + 1 if door[1] == y1 else y1 - 1
         mid = (x0 + x1) // 2
         bar = [(x, by) for x in range(mid - 2, mid + 2)]
         kegs = [(mid - 3, by), (mid + 2, by)]
-        beds = [(x, y) for x in (x0 + 1, x1 - 1) for y in range(y0 + 1, y1, 2)]
+        sides = [(x, y) for x in (x0 + 1, x1 - 1) for y in range(y0 + 1, y1, 2)]
     def by_door(c):
         return abs(c[0] - door[0]) <= 1 and abs(c[1] - door[1]) <= 1
+    box = (x0, y0, x1, y1)
     for c in bar:
-        t[c] = T.COUNTER
+        put_inside(t, c, T.COUNTER, box)
     for c in kegs:
         if t[c] == T.WOOD_FLOOR:
-            t[c] = T.BARREL
-    beds = [c for c in beds if t[c] == T.WOOD_FLOOR and not by_door(c)]
-    for c in beds[:6]:
-        t[c] = T.BED
-    hearths = [c for c in beds[6:] if t[c] == T.WOOD_FLOOR]
-    if hearths:
-        t[hearths[0]] = T.HEARTH
+            put_inside(t, c, T.BARREL, box)
+    sides = [c for c in sides if t[c] == T.WOOD_FLOOR and not by_door(c)]
+    rng.shuffle(sides)
+    for c in sides:
+        if put_inside(t, c, T.HEARTH, box):
+            break
     middle_tiles = [(x, y) for x in range(x0 + 3, x1 - 2) for y in range(y0 + 2, y1 - 1)
                     if t[x, y] == T.WOOD_FLOOR and not by_door((x, y))
                     and all(t[x + dx, y + dy] != T.COUNTER for dx in (-1, 0, 1) for dy in (-1, 0, 1))]
@@ -392,16 +447,14 @@ def inn_building(level: Level, rng: random.Random, ring, sizes=((13, 15), (7, 8)
     for c in middle_tiles:
         if len(placed) == 4:
             break
-        if all(abs(c[0] - p[0]) > 1 or abs(c[1] - p[1]) > 1 for p in placed):
-            t[c] = T.TABLE
+        if all(abs(c[0] - p[0]) > 1 or abs(c[1] - p[1]) > 1 for p in placed) and put_inside(t, c, T.TABLE, box):
             placed.append(c)
-    inn_stairs(level, x0, y0, x1, y1, door)
     return outside
 
 
 def inn_stairs(level: Level, x0: int, y0: int, x1: int, y1: int, door) -> None:
     """Stairs up to the guest rooms and down to the cellar, in the inn's corners away from the
-    door (over a bed or a keg if they must)."""
+    door."""
     t = level.tiles
     corners = [(x0 + 1, y0 + 1), (x1 - 1, y0 + 1), (x0 + 1, y1 - 1), (x1 - 1, y1 - 1)]
     corners.sort(key=lambda c: -((c[0] - door[0]) ** 2 + (2 * (c[1] - door[1])) ** 2))
@@ -413,20 +466,21 @@ def inn_stairs(level: Level, x0: int, y0: int, x1: int, y1: int, door) -> None:
 def shop(level: Level, rng: random.Random, kind: str, name: str, ring):
     """A bakery (bread ovens, flour, a counter), a butcher's (meat hooks, a counter) or an
     armourer's (weapon racks, a counter)."""
-    box = place_box(level, rng, ((6, 8), (5, 6)), ring)
+    box = (place_box(level, rng, ((8, 10), (6, 7)), ring)
+           or place_box(level, rng, ((7, 8), (5, 6)), (ring[0], ring[1] + 12)))   # smaller, further out
     if box is None:
         return None
     x0, y0, w, h = box
     door, outside = building(level, rng, x0, y0, w, h, middle(level), kind=kind, name=name)
     if kind == "bakery":
         furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=2, barrels=2,
-                extra=((T.OVEN, 2),), middle=T.COUNTER)
+                extra=((T.OVEN, 2), (T.CHEST, 1)), middle=T.COUNTER)
     elif kind == "armoury":
         furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=2, barrels=1,
-                extra=((T.RACK, 3),), middle=T.COUNTER)
+                extra=((T.RACK, 3), (T.CHEST, 1)), middle=T.COUNTER)
     else:
         furnish(level, rng, x0, y0, w, h, beds=0, hearth=False, tables=2, barrels=1,
-                extra=((T.HOOKS, 2),), middle=T.COUNTER)
+                extra=((T.HOOKS, 2), (T.CHEST, 1)), middle=T.COUNTER)
     return outside
 
 
@@ -440,9 +494,9 @@ def build_town(level: Level, site, rng: random.Random, land=None) -> None:
              shop(level, rng, "butcher", "the butcher's", (9, 20)),
              shop(level, rng, "armoury", "the armourer's", (9, 22))]
     doors = [d for d in doors if d is not None]
-    doors += houses(level, rng, rng.randint(11, 16), (9, 30))
-    gates = fields(level, rng, rng.randint(3, 5), (30, 44))
-    gates += pastures(level, rng, 1, (30, 44), farming.herd_for(land))
+    doors += houses(level, rng, rng.randint(11, 16), (9, 36))
+    gates = fields(level, rng, rng.randint(3, 5), (36, 50))
+    gates += pastures(level, rng, 1, (36, 50), farming.herd_for(land))
     foot = docks(level, rng) if site.port else None
     camp = lumber_camp(level, rng)
     for start in doors + gates + [s for s in (foot, camp) if s]:
@@ -454,10 +508,10 @@ def build_village(level: Level, site, rng: random.Random, land=None) -> None:
     land = land or DEFAULT_LAND
     square(level, 4, 2, stalls=0)
     level.tiles[level.tiles == T.STREET] = T.GRASS
-    doors = houses(level, rng, rng.randint(4, 7), (6, 20))
+    doors = houses(level, rng, rng.randint(4, 7), (6, 24))
     level.crop = farming.grain_for(land)
-    gates = fields(level, rng, rng.randint(3, 5), (16, 36), sizes=((10, 16), (5, 8)), crop=level.crop)
-    gates += pastures(level, rng, rng.randint(1, 2), (16, 38), farming.herd_for(land))
+    gates = fields(level, rng, rng.randint(3, 5), (20, 40), sizes=((10, 16), (5, 8)), crop=level.crop)
+    gates += pastures(level, rng, rng.randint(1, 2), (20, 42), farming.herd_for(land))
     foot = docks(level, rng) if site.port else None
     camp = lumber_camp(level, rng)
     cx, cy = middle(level)
@@ -608,6 +662,47 @@ def largest_area(walk: np.ndarray) -> np.ndarray:
     return label == best
 
 
+def safe_spot(walk: np.ndarray, x: int, y: int) -> bool:
+    """Whether blocking (x, y) leaves everything round it still joined (8-way), so nothing
+    beyond it is cut off."""
+    w, h = walk.shape
+    ring = [(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx or dy)
+            and 0 <= x + dx < w and 0 <= y + dy < h and walk[x + dx, y + dy]]
+    if not ring:
+        return False
+    seen, todo = {ring[0]}, [ring[0]]
+    while todo:
+        a = todo.pop()
+        for b in ring:
+            if b not in seen and abs(a[0] - b[0]) <= 1 and abs(a[1] - b[1]) <= 1:
+                seen.add(b)
+                todo.append(b)
+    return len(seen) == len(ring)
+
+
+def hide_chests(tiles: np.ndarray, floor: int, rng: random.Random, count: int, avoid=()) -> list:
+    """Chests tucked into nooks (the floor tiles with the fewest open neighbours), away from
+    the stairs and from each other, never where they'd cut a way off."""
+    walk = T.WALK[tiles].copy()
+    w, h = tiles.shape
+    def open_round(x, y):
+        return sum(walk[x + dx, y + dy] for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                   if (dx or dy) and 0 <= x + dx < w and 0 <= y + dy < h)
+    spots = [(int(x), int(y)) for x, y in zip(*np.nonzero(tiles == floor))
+             if all(max(abs(x - a), abs(y - b)) > 4 for a, b in avoid)]
+    rng.shuffle(spots)
+    spots.sort(key=lambda c: open_round(*c))
+    placed = []
+    for x, y in spots:
+        if len(placed) == count:
+            break
+        if all(max(abs(x - a), abs(y - b)) > 8 for a, b in placed) and safe_spot(walk, x, y):
+            tiles[x, y] = T.CHEST
+            walk[x, y] = False
+            placed.append((x, y))
+    return placed
+
+
 def far_tile(walk: np.ndarray, start: tuple[int, int]) -> tuple[int, int]:
     dist = tcod.path.maxarray(walk.shape, dtype=np.int32)
     dist[start] = 0
@@ -639,6 +734,7 @@ def cave_level(key: tuple, site, rng: random.Random) -> Level:
         down = far_tile(T.WALK[tiles], up)
         tiles[down] = T.STAIRS_DOWN
         level.exits[down] = (key[0], key[1], key[2], key[3] + 1)
+    hide_chests(tiles, T.CAVE_FLOOR, rng, rng.randint(1, 2), avoid=list(level.exits))
     return level
 
 
@@ -647,6 +743,7 @@ def crypt_level(key: tuple, site, rng: random.Random) -> Level:
     m, start, _ = rooms.generate(60, 30, rng, max_rooms=14, min_size=4, max_size=8)
     tiles = np.where(m.walkable, T.STONE_FLOOR, T.STONE_WALL).astype(np.uint8)
     tiles[start] = T.STAIRS_UP
+    hide_chests(tiles, T.STONE_FLOOR, rng, rng.randint(2, 3), avoid=[start])
     return Level(key, f"Crypt under the {site.name}", tiles, {start: parent(key)}, underground=True,
                  indoor_air=12.0)
 

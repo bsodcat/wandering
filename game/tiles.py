@@ -84,6 +84,7 @@ TILES = [
     Tile(55, "dug earth", "░", (150, 110, 70), (78, 55, 34), minutes=0.8, natural=False),   # grows back after rain
     Tile(56, "bedroll", "⌐", (175, 140, 95), (35, 32, 28), minutes=0.8, roof=True, natural=False),   # a goblin's bed
     Tile(57, "weapon rack", "╫", (195, 195, 210), (70, 48, 30), walk=False, roof=True, natural=False),
+    Tile(58, "chest", "▄", (205, 150, 70), (60, 42, 26), walk=False, roof=True, natural=False),
 ]
 assert all(t.id == i for i, t in enumerate(TILES))
 ID = {t.name: t.id for t in TILES}
@@ -92,7 +93,8 @@ ID = {t.name: t.id for t in TILES}
  BOULDER, ROCK, SCREE, ROAD, STREET, BRIDGE, PATH, WOOD_FLOOR, STONE_FLOOR, WALL, STONE_WALL, DOOR,
  BED, TABLE, HEARTH, WELL, STALL, CROPS, FENCE, DOCK, RUBBLE, CAVE_FLOOR, CAVE_WALL, STAIRS_DOWN,
  STAIRS_UP, BATTLEMENT, BARREL, DRY_GRASS, REEDS, FLAGSTONES, TORCH, WHEAT, RYE, RICE, MILLET, OVEN,
- COUNTER, HOOKS, SIGN, WOODPILE, STUMP, TROUGH, DUG, BEDROLL, RACK) = range(len(TILES))
+ COUNTER, HOOKS, SIGN, WOODPILE, STUMP, TROUGH, DUG, BEDROLL, RACK, CHEST) = range(len(TILES))
+CONTAINERS = (BARREL, CHEST)                  # things you open: game/shop.py's Container
 GRAINS = [WHEAT, RYE, RICE, MILLET]
 FIELDS = GRAINS + [CROPS]
 

@@ -69,7 +69,7 @@ class WideScreenTests(unittest.TestCase):
         e.level.explored[:] = True
         console = frame(e, 200, 53)
         level_cols = (console.rgb["ch"][:, 10] != ord(" ")).sum()
-        self.assertGreaterEqual(level_cols, e.level.width - 2)   # the whole 96-wide region shows
+        self.assertGreaterEqual(level_cols, min(e.level.width, 200) - 2)   # the map fills the screen's width
 
     def test_mouse_and_clicks_follow_the_screen_size(self):
         e = Engine.new(1)
