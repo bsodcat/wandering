@@ -11,10 +11,14 @@ Moving up or down a level is a slope; two is a steep scramble that takes far lon
 you out; three or more (only where something's gone wrong at a seam) can't be climbed. Roads,
 streets and paths are graded, so they're never more than a slope.
 
+With climbing gear (game/gear.py) you can also go up and down rises of three or four levels on a
+rope, and climb onto boulders and rock outcrops (`CLIMBABLE`); standing on top of one lifts your
+eyes (`ON_ROCK_EYE`), so you see further over the land around.
+
 Sight: you see a tile only if the ground between doesn't rise above the line from your eyes to
 it. Standing on a hilltop you see far; behind a ridge you see nothing beyond it, and from a
-cliff edge you can't see its foot. The overworld uses the same rule with the world's
-elevation, and climbing there costs hours too.
+cliff edge you can't see its foot. On the overworld, high ground doesn't hide anything (you see
+the regions around you out to your sight's reach), but climbing there costs hours too.
 """
 from __future__ import annotations
 
@@ -26,16 +30,22 @@ from . import tiles as T
 LEVEL_M = 20.0            # metres a local height level stands for
 MOST_STEP = 2             # the biggest difference between neighbouring tiles
 EYE = 1.6                 # how far above the ground your eyes are, in levels
-WORLD_EYE = 40.0          # metres, on the overworld (you'd find a rise to look from)
 ROUGH = {B.PEAKS: 6.0, B.MOUNTAINS: 4.5, B.HILLS: 2.5, B.TAIGA: 1.2, B.FOREST: 1.0, B.JUNGLE: 1.0,
          B.TUNDRA: 0.8, B.SHRUBLAND: 1.0, B.STEPPE: 0.8, B.SAVANNA: 0.7, B.GRASSLAND: 0.8,
-         B.DESERT: 1.2, B.SWAMP: 0.2, B.BEACH: 0.3, B.GLACIER: 1.5}
+         B.DESERT: 1.2, B.SWAMP: 0.2, B.BEACH: 0.3, B.GLACIER: 1.5, B.PASTURE: 0.6, B.DOWNS: 2.2}
 ROUGHNESS = np.array([ROUGH.get(b.id, 0.6) for b in B.BIOMES], dtype=np.float64)
 GRADED = [T.ROAD, T.STREET, T.PATH, T.BRIDGE, T.DOCK, T.STAIRS_DOWN, T.STAIRS_UP, T.DOOR]
 
 # Climbing: height difference -> (times as long, extra effort, what you notice)
 CLIMB = {1: (1.6, 0.8, None), 2: (3.0, 2.5, "You scramble up the steep slope."),
          -1: (1.1, 0.1, None), -2: (1.6, 0.6, "You clamber down the steep slope.")}
+ROPE_STEP = 4             # with climbing gear, the biggest rise you can climb (or let yourself down)
+ROPE = {3: (5.0, 3.5, "You rope up the rock face."), 4: (6.5, 4.5, "You rope up the sheer rock face."),
+        -3: (2.5, 1.0, "You let yourself down on the rope."), -4: (3.0, 1.2, "You let yourself down on the rope.")}
+# Climbing onto a rock: tile -> (times as long, extra effort); along the top of one is easier
+CLIMBABLE = {T.BOULDER: (3.0, 2.0), T.ROCK: (5.0, 3.0)}
+ALONG_ROCK = (2.0, 1.0)
+ON_ROCK_EYE = {T.BOULDER: 1.0, T.ROCK: 1.5}   # extra levels your eyes are lifted, standing on top
 WORLD_CLIMB_H = 2.5       # overworld hours per 1000 m climbed
 WORLD_DESCENT_H = 0.8     # and per 1000 m down
 
@@ -103,13 +113,20 @@ def level_ground(h: np.ndarray, tiles: np.ndarray) -> np.ndarray:
 
 # ----------------------------------------------------------------- climbing
 
-def climb(dh: int, graded: bool) -> tuple[bool, float, float, str | None]:
-    """Stepping up (or down) `dh` levels: (can you, times as long, extra effort, a message)."""
+def climb(dh: int, graded: bool, roped: bool = False) -> tuple[bool, float, float, str | None]:
+    """Stepping up (or down) `dh` levels: (can you, times as long, extra effort, a message).
+    `roped`: you've climbing gear on, so a rise of up to ROPE_STEP levels can be climbed."""
     if graded:
         dh = max(-1, min(1, dh))
     if dh == 0:
         return True, 1.0, 0.0, None
+    if roped and MOST_STEP < abs(dh) <= ROPE_STEP:
+        slow, effort, message = ROPE[dh]
+        return True, slow, effort, message
     if abs(dh) > MOST_STEP:
+        if roped:
+            return False, 1.0, 0.0, ("It's too high to climb, even with a rope." if dh > 0
+                                     else "It's too far to let yourself down.")
         return False, 1.0, 0.0, "It's too steep to climb." if dh > 0 else "It's too far to drop down."
     slow, effort, message = CLIMB[dh]
     return True, slow, effort, message
@@ -156,10 +173,6 @@ def sightlines(height: np.ndarray, origin: tuple[int, int], candidates: np.ndarr
     hidden = (between & (ground > line + 1e-6)).any(axis=1)
     out[xs[~hidden], ys[~hidden]] = True
     return out
-
-
-def world_sightlines(world, origin: tuple[int, int], candidates: np.ndarray) -> np.ndarray:
-    return sightlines(np.maximum(world.elevation, 0.0), origin, candidates, WORLD_EYE)
 
 
 def world_climb_hours(world, a: tuple[int, int], b: tuple[int, int]) -> float:

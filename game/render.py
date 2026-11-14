@@ -17,6 +17,11 @@ Height: ground above you is drawn a little brighter and ground below you a littl
 the foot of a rise lies in its shadow. o on a local map shows the relief instead: each tile's
 height (its last digit) on a colour from low to high. Things lying on the ground show over
 the tile they're on.
+
+Floors above the ground (an inn's rooms, a tower) are drawn over the ground they stand on:
+where the floor isn't seen yet, and all around it, the ground below shows through. Indoors it's
+only the ground you remember, fading out the further it is from you; from a rooftop, out in the
+open, you see it, hazier with distance.
 """
 from __future__ import annotations
 
@@ -156,7 +161,7 @@ def burn(ch, fg, bg, t, visible, strength, phase, dark, base_fg, base_bg, second
     amount = (strength * flicker(phase, seconds) * dark * lit)[..., None]
     fg += base_fg * amount * 0.9 + amount * FIRE_FG
     bg += base_bg * amount * 0.8 + amount * FIRE_BG
-    flames = np.isin(t, [T.HEARTH, T.TORCH, T.OVEN]) & visible
+    flames = np.isin(t, [T.HEARTH, T.TORCH, T.OVEN, T.LAVA]) & visible
     if flames.any():
         step, colours = flame(phase, seconds)
         fg[flames] = colours[flames]
@@ -189,9 +194,14 @@ def draw_map(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -> 
     bridge = road & river
     ch[bridge], fg[bridge] = ord("="), BRIDGE_FG
     for s in w.sites:
-        if cx <= s.x < cx + vw and cy <= s.y < cy + vh:
-            char, colour, _, _ = SITE_KINDS[s.kind]
-            ch[s.x - cx, s.y - cy], fg[s.x - cx, s.y - cy] = ord(char), colour
+        for sx, sy in s.cells:
+            if cx <= sx < cx + vw and cy <= sy < cy + vh:
+                char, colour, _, _ = SITE_KINDS[s.kind]
+                ch[sx - cx, sy - cy], fg[sx - cx, sy - cy] = ord(char), colour
+    from . import carts                     # the carts out on the roads
+    for sx, sy in carts.on_the_road(w, e.minutes):
+        if cx <= sx < cx + vw and cy <= sy < cy + vh and (e.visible[sx, sy] or e.reveal):
+            ch[sx - cx, sy - cy], fg[sx - cx, sy - cy] = ord("╥"), carts.CART_FG
 
     xs = np.arange(cx, cx + vw)[:, None]
     ys = np.arange(cy, cy + vh)[None, :]
@@ -305,6 +315,94 @@ def leaf_layer(canopy, boughs, look: str, gx, gy):
 def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -> None:
     level = e.level
     ox, oy = follow(e.lx, e.ly, console.width, console.height)
+    below = e.ground_below()
+    if below is not None:                         # a floor above the ground: the ground shows around it
+        ground, (dx, dy) = below
+        draw_below(console, e, ground, ox + dx, oy + dy, (e.lx + dx, e.ly + dy), seconds)
+    shown = paint_level(console, e, level, ox, oy, e.local_visible, (e.lx, e.ly), seconds,
+                        keep=level.footprint if below is not None else None)
+    draw_actors(console, e, ox, oy, shown if not level.underground else None)
+    draw_carts(console, e, ox, oy)
+    p = e.player
+    console.print(e.lx - ox, e.ly - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
+
+
+BELOW_HAZE = 70        # tiles off: the ground seen from a rooftop is that much hazier by then
+BELOW_FADE = 34        # tiles off: the ground you only remember from up here has faded out by then
+BELOW_MEMORY = 0.85    # how bright the remembered ground is right under you
+HAZE = np.array((150, 165, 185))
+
+
+def draw_below(console, e: Engine, ground, gox: int, goy: int, at: tuple[int, int], seconds: float) -> None:
+    """The ground under a floor above it. From a rooftop you see it, hazier the further off; from
+    indoors it's only what you remember, fading out the further it is from you, as if seen through
+    the floor. Where the floor up here isn't seen yet, this is what shows."""
+    vis = e.below_visible if e.below_visible is not None else np.zeros(ground.tiles.shape, dtype=bool)
+    paint_level(console, e, ground, gox, goy, vis, at, seconds)
+    view, (sx0, sy0), (vw, vh) = window(gox, goy, ground.width, ground.height, console.width, console.height)
+    if not vw or not vh:
+        return
+    xs = np.arange(view[0].start, view[0].start + vw)[:, None]
+    ys = np.arange(view[1].start, view[1].start + vh)[None, :]
+    dist = np.sqrt((xs - at[0]) ** 2 + (2 * (ys - at[1])) ** 2)
+    now = vis[view]
+    haze = (np.clip(dist / BELOW_HAZE, 0, 1) * 0.45)[..., None] * now[..., None]
+    fade = np.where(now, 1.0, BELOW_MEMORY * np.clip(1 - dist / BELOW_FADE, 0, 1) ** 1.5)[..., None]
+    out = console.rgb[sx0: sx0 + vw, sy0: sy0 + vh]
+    for part, tint in (("fg", HAZE), ("bg", HAZE * 0.6)):
+        c = out[part].astype(np.float32)
+        c = (c * (1 - haze) + tint * haze) * fade
+        out[part] = np.clip(c, 0, 255).astype(np.uint8)
+
+
+SHADOW_ROWS = 16        # how far down the map (rows) a rise's shadow can reach, fading out by then
+SUN_DROP = 0.35         # levels the light sinks each row south of a rise: lower means longer shadows
+SHADOW_DEPTH = 0.09     # how much darker each level of rise above the light makes the ground
+DARKEST = 0.45          # the deepest a shadow gets
+BRIGHTER = 0.045        # each level above you is this much brighter (below, darker)
+
+
+def smooth(a: np.ndarray, rx: int, ry: int) -> np.ndarray:
+    """A box blur over (2rx+1) x (2ry+1) tiles, the edges carried on."""
+    p = np.pad(a, ((rx, rx), (ry, ry)), mode="edge")
+    w, h = a.shape
+    out = np.zeros(a.shape, np.float32)
+    for dx in range(2 * rx + 1):
+        for dy in range(2 * ry + 1):
+            out += p[dx: dx + w, dy: dy + h]
+    return out / ((2 * rx + 1) * (2 * ry + 1))
+
+
+def relief_light(level, view, at) -> tuple[np.ndarray, np.ndarray]:
+    """(brightness, shadow 0..DARKEST) of each tile in view from the lie of the land, both soft.
+
+    Brightness grades with height relative to where you stand: brighter above you, darker below.
+    The shadow is cast by light from the north sinking SUN_DROP levels a row: ground lies in the
+    shadow of a rise to its north for as far as the rise stands above that light, so it's
+    darkest right at the foot, fades with distance, and a taller rise throws a longer, deeper
+    shadow. Heights are blurred first, so steps between levels blend instead of making edges."""
+    xs, ys = view
+    k = SHADOW_ROWS
+    x0, x1 = max(0, xs.start - 3), min(level.width, xs.stop + 3)
+    y0, y1 = max(0, ys.start - k - 2), min(level.height, ys.stop + 2)
+    e = smooth(level.elev[x0:x1, y0:y1].astype(np.float32), 2, 1)
+    above = np.zeros(e.shape, np.float32)
+    for d in range(1, k + 1):                 # the rise d rows north, over the light
+        north = np.pad(e, ((0, 0), (d, 0)), mode="edge")[:, :-d]
+        above = np.maximum(above, (north - e - SUN_DROP * d) * (1 - d / (k + 1)))
+    shadow = np.clip(above * SHADOW_DEPTH, 0, DARKEST)
+    shadow = smooth(shadow, 1, 0)
+    cut = (slice(xs.start - x0, xs.stop - x0), slice(ys.start - y0, ys.stop - y0))
+    rel = e[cut] - float(level.elev[at])
+    shade = np.clip(1 + BRIGHTER * rel, 0.6, 1.35)
+    return shade.astype(np.float32), shadow[cut].astype(np.float32)
+
+
+def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.ndarray,
+                at: tuple[int, int], seconds: float, keep: np.ndarray | None = None):
+    """Draws a level's tiles from origin (ox, oy) as seen from `at`. With `keep`, only those
+    of its tiles you've seen are drawn, leaving what's under them (the ground below a floor).
+    Returns the treetops shown, for the people under them."""
     view, (sx0, sy0), (vw, vh) = window(ox, oy, level.width, level.height, console.width, console.height)
     cx, cy = view[0].start, view[1].start
     t = level.tiles[view]
@@ -318,11 +416,8 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
                 ch[here], fg[here], bg[here] = ord(look[0]), look[1], look[2]
     elev = level.elev[view].astype(np.float32)
     if level.elev.max() > level.elev.min():       # the lie of the land
-        rel = elev - float(level.elev[e.lx, e.ly])
-        shade = np.clip(1 + 0.05 * rel, 0.6, 1.35)[..., None]
-        north = np.pad(elev, ((0, 0), (1, 0)), mode="edge")[:, :-1]
-        foot = np.clip(1 - 0.12 * (north - elev), 0.7, 1)[..., None]     # in the shadow of a rise
-        fg, bg = fg * shade, bg * shade * foot
+        shade, shadow = relief_light(level, view, at)
+        fg, bg = fg * shade[..., None], bg * (shade * (1 - shadow))[..., None]
     if e.relief:
         lo, hi = float(level.elev.min()), float(level.elev.max())
         bg = ramp((elev - lo) / max(1.0, hi - lo), RELIEF)
@@ -330,11 +425,11 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
         ch = (ord("0") + level.elev[view] % 10).astype(ch.dtype)
     base_fg, base_bg = fg, bg                     # what's remembered once out of sight
     lit_from = fg                                 # to light what lies on the ground the same way
-    visible = e.local_visible[view]
-    seen = level.explored[view]
+    visible = visible_all[view]
+    seen = level.explored[view] | e.reveal_local
     xs = np.arange(cx, cx + vw)[:, None] + np.zeros((1, vh), int)
     ys = np.arange(cy, cy + vh)[None, :] + np.zeros((vw, 1), int)
-    dist = np.sqrt((xs - e.lx) ** 2 + (2 * (ys - e.ly)) ** 2)
+    dist = np.sqrt((xs - at[0]) ** 2 + (2 * (ys - at[1])) ** 2)
     c = e.now
     gx, gy = xs + level.region[0] * 1000, ys + level.region[1] * 1000
     region = level.region
@@ -406,12 +501,15 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
     hidden = ~seen
     ch[hidden], fg[hidden], bg[hidden] = ord(" "), 0, 0
     out = console.rgb[sx0: sx0 + vw, sy0: sy0 + vh]
-    out["ch"] = ch
-    out["fg"] = np.clip(fg, 0, 255).astype(np.uint8)
-    out["bg"] = np.clip(bg, 0, 255).astype(np.uint8)
-    draw_actors(console, e, ox, oy, shown if not level.underground else None)
-    p = e.player
-    console.print(e.lx - ox, e.ly - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
+    fg, bg = np.clip(fg, 0, 255).astype(np.uint8), np.clip(bg, 0, 255).astype(np.uint8)
+    if keep is None:
+        out["ch"], out["fg"], out["bg"] = ch, fg, bg
+    else:
+        put = keep[view] & seen
+        out["ch"] = np.where(put, ch, out["ch"])
+        out["fg"] = np.where(put[..., None], fg, out["fg"])
+        out["bg"] = np.where(put[..., None], bg, out["bg"])
+    return shown
 
 
 def draw_actors(console, e: Engine, ox: int, oy: int, canopy_shown) -> None:
@@ -445,15 +543,94 @@ def draw(console: tcod.console.Console, e: Engine, seconds: float | None = None)
     e.panels.width, e.panels.height = console.width, console.height    # however big the screen is now
     e.menu.cols, e.menu.rows = console.width, console.height
     console.clear()
-    if e.level is None:
+    over_world = getattr(e.shop, "overworld", False)      # a cart ride's menu shows the world
+    if e.level is None or over_world:
         draw_map(console, e, seconds)
     else:
         draw_local(console, e, seconds)
-    draw_pointer(console, e)
+    if over_world:
+        draw_marks(console, e, e.shop.marks(e))
+    elif e.riding is not None:
+        from . import carts
+        draw_marks(console, e, carts.ride_marks(e))
+    else:
+        draw_pointer(console, e)
     cell = map_cell(e, *e.mouse) if e.mouse else None
     draw_hud(console, e, e.describe(*cell) if cell else [], seconds)
     if not e.player.alive:
         text = f" You {e.player.cause}. Esc quits. "
         console.print(max(0, (console.width - len(text)) // 2), console.height // 2 - 3, text, fg=(255, 255, 255), bg=(120, 20, 20))
     draw_shop(console, e)
+    draw_riding(console, e)
     draw_menu(console, e.menu)
+    draw_console(console, e)
+
+
+def draw_console(console, e: Engine) -> None:
+    """The dev console, across the top of the screen: what's been said, and the line you're typing."""
+    from .devconsole import SHOWN
+    dev = e.console
+    if not dev.open:
+        return
+    w, h = console.width, SHOWN + 3
+    console.draw_rect(0, 0, w, h, ord(" "), fg=(220, 220, 220), bg=(12, 14, 20))
+    console.draw_rect(0, h - 1, w, 1, ord("─"), fg=(90, 110, 140), bg=(12, 14, 20))
+    lines = list(dev.output)
+    end = len(lines) - dev.scroll
+    shown = lines[max(0, end - SHOWN): end]
+    for i, text in enumerate(shown):
+        colour = (150, 200, 255) if text.startswith("> ") else (205, 205, 200)
+        console.print(1, 1 + SHOWN - len(shown) + i, text[: w - 2], fg=colour)
+    blink = "_" if int(time.monotonic() * 2) % 2 == 0 else " "
+    prompt = ("> " + dev.line + blink)[-(w - 2):]
+    console.print(1, h - 2, prompt, fg=(255, 230, 140))
+    flags = [name for name, on in (("GOD", e.player.god), ("NOCLIP", e.player.noclip), ("PAUSED", e.paused),
+                                   (f"WEATHER {e.forced_weather}", e.forced_weather)) if on]
+    tag = " " + "  ".join(flags) + " " if flags else " dev console "
+    console.print(max(0, w - len(tag) - 2), h - 1, tag, fg=(255, 200, 120), bg=(12, 14, 20))
+
+
+def draw_marks(console, e: Engine, marks: list) -> None:
+    """Marks over the world map (a cart ride's destinations and the way there)."""
+    ox, oy = camera(e)
+    for (x, y), char, colour in marks:
+        sx, sy = x - ox, y - oy
+        if 0 <= sx < console.width and 0 <= sy < console.height:
+            console.rgb["ch"][sx, sy] = ord(char)
+            console.rgb["fg"][sx, sy] = colour
+            console.rgb["bg"][sx, sy] = (40, 34, 20)
+
+
+def draw_carts(console, e: Engine, ox: int, oy: int) -> None:
+    """The carts on this map, parked or on the road, where you can see them."""
+    from . import carts
+    light = 1.0 if e.level.underground else max(0.45, e.now.light)
+    for lc in carts.local_carts(e):
+        for (x, y), ch in lc.cells.items():
+            sx, sy = x - ox, y - oy
+            if 0 <= sx < console.width and 0 <= sy < console.height and e.local_visible[x, y]:
+                fg = np.array(carts.SPRITE_FG.get(ch, (190, 140, 80))) * light
+                console.rgb["ch"][sx, sy] = ord(ch)
+                console.rgb["fg"][sx, sy] = fg.astype(np.uint8)
+
+
+def draw_riding(console, e: Engine) -> None:
+    """On a cart ride: who's driving, where to, and how far there is to go, over the world map."""
+    r = e.riding
+    if r is None:
+        return
+    from . import carts
+    from .climate import clock_text
+    done = r.total - len(r.steps)
+    width = 24
+    filled = round(width * done / max(1, r.total))
+    bar = "█" * filled + "░" * (width - filled)
+    lines = [f" Riding with {r.driver} to {r.dest.name} ",
+             f" {bar}  {carts.hours_text(r.hours_left)} to go, it's {clock_text(e.minutes)} ",
+             " Esc: menu "]
+    w = max(len(line) for line in lines) + 2
+    x, y = (console.width - w) // 2, 2
+    console.draw_frame(x, y, w, len(lines) + 2, fg=(150, 120, 80), bg=(20, 16, 12))
+    for i, line in enumerate(lines):
+        colour = (255, 225, 150) if i == 0 else (200, 200, 190) if i == 1 else (130, 130, 120)
+        console.print(x + (w - len(line)) // 2, y + 1 + i, line, fg=colour, bg=(20, 16, 12))

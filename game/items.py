@@ -8,8 +8,8 @@ and chests (`Level.stores`), and you carry them in your `Inventory`. Some are to
 - a shovel:  dig (x) the ground you're standing on for what's buried there (there's one in a
              house in every town and village)
 
-Weapons and armour (game/combat.py) are sold by a town's shopkeeper; wield or wear them from
-the use menu (e). Food can be eaten the same way. Coins pay for things, logs sell to a
+Weapons (game/combat.py) and armour, clothes and climbing gear (game/gear.py) are sold by a
+town's shopkeeper; wield or wear them from the equipment menu (q) or the use menu (e). Food can be eaten the same way. Coins pay for things, logs sell to a
 lumberjack, and trinkets and rings to a shopkeeper. A room key lets you sleep upstairs at an
 inn for the night. A creature killed leaves its carcass (goblins carry them off and cook them).
 
@@ -31,6 +31,7 @@ class Kind:
     note: str = ""
     value: int = 0            # what a shopkeeper pays for one
     meal: tuple = ()          # (health, stamina) eating one gives back
+    article: str = ""         # for one of them, if not "a" or "an": "a pair of"
 
 
 WEAPON, ARMOUR, RING = (200, 200, 215), (170, 175, 190), (215, 220, 235)
@@ -55,7 +56,30 @@ KINDS = {
     "leather coat": Kind("leather coat", "leather coats", "[", (170, 120, 75), "armour: body", value=6),
     "mail shirt": Kind("mail shirt", "mail shirts", "[", ARMOUR, "armour: body", value=15),
     "iron helm": Kind("iron helm", "iron helms", "[", (160, 160, 170), "armour: head", value=5),
-    "wooden shield": Kind("wooden shield", "wooden shields", "[", (175, 130, 80), "armour: blocks blows", value=3),
+    "wooden shield": Kind("wooden shield", "wooden shields", "[", (175, 130, 80), "a shield: blocks blows", value=3),
+    "quarterstaff": Kind("quarterstaff", "quarterstaves", ")", (175, 140, 95), "a weapon, quick and handy", value=2),
+    "mace": Kind("mace", "maces", ")", (175, 175, 185), "a heavy weapon", value=6),
+    # more to wear: game/gear.py says what each does (q, the equipment menu)
+    "fur coat": Kind("fur coat", "fur coats", "[", (160, 125, 90), "body: very warm", value=9),
+    "leather cap": Kind("leather cap", "leather caps", "[", (165, 120, 80), "head: a little warmth", value=1),
+    "fur hat": Kind("fur hat", "fur hats", "[", (175, 145, 110), "head: warm", value=2),
+    "straw hat": Kind("straw hat", "straw hats", "[", (225, 200, 120), "head: shade from the sun", value=1),
+    "wool cloak": Kind("wool cloak", "wool cloaks", "[", (140, 130, 150), "cloak: warm, sheds some rain", value=3),
+    "oilskin cloak": Kind("oilskin cloak", "oilskin cloaks", "[", (150, 150, 100), "cloak: keeps the rain off", value=5),
+    "fur cloak": Kind("fur cloak", "fur cloaks", "[", (165, 135, 100), "cloak: very warm", value=7),
+    "iron-bound shield": Kind("iron-bound shield", "iron-bound shields", "[", (165, 150, 130),
+                              "a shield: blocks more blows", value=7),
+    "leather gloves": Kind("leather gloves", "pairs of leather gloves", "[", (170, 120, 75),
+                           "hands: a better grip for climbing", value=2, article="a pair of"),
+    "fur mittens": Kind("fur mittens", "pairs of fur mittens", "[", (185, 160, 125),
+                        "hands: warm, but clumsy for climbing", value=2, article="a pair of"),
+    "leather boots": Kind("leather boots", "pairs of leather boots", "[", (150, 105, 65), "feet: surer footing", value=3, article="a pair of"),
+    "hobnailed boots": Kind("hobnailed boots", "pairs of hobnailed boots", "[", (140, 135, 130),
+                            "feet: sure footing on rough ground", value=4, article="a pair of"),
+    "fur-lined boots": Kind("fur-lined boots", "pairs of fur-lined boots", "[", (170, 140, 105),
+                            "feet: warm, good in snow", value=5, article="a pair of"),
+    "climbing gear": Kind("climbing gear", "sets of climbing gear", "&", (210, 170, 90),
+                          "harness, rope and pitons: wear it to climb rock", value=10, article="a set of"),
     # food (eat it from the use menu)
     "roast meat": Kind("roast meat", "pieces of roast meat", "%", (200, 110, 70), "food", meal=(6, 20)),
     "apple": Kind("apple", "apples", "%", (220, 70, 60), "food", meal=(2, 8)),
@@ -148,6 +172,8 @@ def amount(kind: str, n: int) -> str:
     """"an axe", "3 logs"."""
     k = KINDS[kind]
     if n == 1:
+        if k.article:
+            return f"{k.article} {k.name}"
         return ("an " if k.name[0] in "aeiou" else "a ") + k.name
     return f"{n} {k.plural}"
 

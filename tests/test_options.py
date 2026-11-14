@@ -7,7 +7,7 @@ import tcod
 from tcod.event import KeySym, Modifier
 
 from game.engine import Engine
-from game.options import (FONT_SIZES, SCALES, Menu, Settings, available_fonts, box, fits, row_y,
+from game.options import (FONT_SIZES, PAUSE_ITEMS, SCALES, Menu, Settings, available_fonts, box, fits, row_y,
                           value_span)
 from game.render import draw
 from game.ui import SCREEN_H, SCREEN_W
@@ -89,11 +89,27 @@ class MenuTests(unittest.TestCase):
     def test_pause_menu_to_options_and_back(self):
         m = Menu()
         m.show("pause")
-        m.handle_key(KeySym.DOWN)
+        m.cursor = PAUSE_ITEMS.index("Options")
         m.handle_key(KeySym.RETURN)
         self.assertEqual(m.screen, "options")
         m.handle_key(KeySym.ESCAPE)
         self.assertEqual(m.screen, "pause")
+        m.handle_key(KeySym.ESCAPE)
+        self.assertFalse(m.open)
+
+    def test_time_skip_screen(self):
+        m = Menu()
+        self.assertNotIn("Time skip", PAUSE_ITEMS)         # only the T key opens it
+        m.open_skip(back_to=None)
+        self.assertEqual(m.screen, "timeskip")
+        m.handle_key(KeySym.RIGHT)                       # Pass: ten thousand years
+        m.handle_key(KeySym.DOWN)
+        m.handle_key(KeySym.RIGHT)                       # Change: the next one
+        self.assertEqual(m.skip_choice(), (10_000, "Wetter"))
+        m.handle_key(KeySym.DOWN)
+        self.assertEqual(m.handle_key(KeySym.RETURN), "skip")
+        self.assertFalse(m.open)
+        m.open_skip(back_to=None)                        # T in a game: Esc closes it
         m.handle_key(KeySym.ESCAPE)
         self.assertFalse(m.open)
 
@@ -144,7 +160,8 @@ class MenuTests(unittest.TestCase):
         x = box(n)[0] + 5
         m.click(x, row_y(n, n - 1))                      # Back
         self.assertEqual(m.screen, "pause")
-        self.assertEqual(m.click(x + 15, row_y(4, 3)), "quit")
+        n = len(PAUSE_ITEMS)
+        self.assertEqual(m.click(x + 15, row_y(n, PAUSE_ITEMS.index("Quit"))), "quit")
 
     def test_alt_enter_and_f11_toggle_fullscreen_anywhere(self):
         e = Engine.new(1)

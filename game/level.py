@@ -72,6 +72,12 @@ class Level:
     noises: list = field(default_factory=list)         # (x, y, when, how far it carries): what creatures hear
     scent: np.ndarray | None = None                    # when something last passed each tile (for wolves)
     trail: np.ndarray | None = None                    # how worn each tile is by wolves' feet
+    soil: np.ndarray | None = None                     # how wet the ground is, 0..1 (erosion.py)
+    soil_minutes: float | None = None                  # the clock when the soil was last rained on or dried
+    mud: dict = field(default_factory=dict)            # (x, y) -> the tile it'll be again once the mud dries
+    silt: dict = field(default_factory=dict)           # (x, y) -> [what the silt buried, when it was laid]
+    footprint: np.ndarray | None = None                # a floor above the ground: the tiles that are floor
+    over: tuple | None = field(default=None, repr=False)   # (ground key, dx, dy): what lies under it (engine.py)
 
     def __post_init__(self):
         if self.explored is None:
@@ -86,6 +92,8 @@ class Level:
             self.scent = np.full(self.tiles.shape, -1e9, dtype=np.float64)
         if self.trail is None:
             self.trail = np.zeros(self.tiles.shape, dtype=np.int16)
+        if self.footprint is None:
+            self.footprint = np.ones(self.tiles.shape, dtype=bool)
 
     @property
     def region(self) -> tuple[int, int]:

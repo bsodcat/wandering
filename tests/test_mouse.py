@@ -65,6 +65,7 @@ class LookTests(unittest.TestCase):
         wall = next(zip(*np.nonzero(e.level.tiles == T.WALL)))
         self.assertIn("Blocks the way", e.describe(*wall))
         e.level.explored[:] = False
+        e.reveal_local = False                       # m: only what you've seen
         self.assertEqual(e.describe(*door), ["Unexplored"])
 
     def test_stairs_say_where_they_go(self):
@@ -125,6 +126,7 @@ class WalkTests(unittest.TestCase):
         self.assertTrue(all(T.WALK[e.level.tiles[p]] for p in path))
         e.level.explored[:] = False
         e.level.explored[e.lx, e.ly] = True
+        e.reveal_local = False                       # m: only what you've seen
         self.assertEqual(e.route(x, y), [])
 
     def test_holding_right_walks_there(self):
@@ -194,6 +196,7 @@ class WalkTests(unittest.TestCase):
         e = new_local()
         e.level.explored[:] = False
         e.level.explored[e.lx, e.ly] = True
+        e.reveal_local = False                       # m: only what you've seen
         sx, sy = screen_of(e, min(e.level.width - 1, e.lx + 5), e.ly)
         main.handle_mouse(e, press(sx, sy, E.MouseButton.RIGHT))
         self.assertEqual(e.messages[-1], "You don't know a way there.")

@@ -18,7 +18,8 @@ import tcod
 
 from . import tiles as T
 
-REACH = {T.HEARTH: 7.0, T.TORCH: 8.0, T.OVEN: 5.0}   # columns the light reaches
+REACH = {T.HEARTH: 7.0, T.TORCH: 8.0, T.OVEN: 5.0, T.FORGE: 6.0}   # columns the light reaches
+LAVA_GLOW = 5                              # columns lava lights around it (no shadows: it's everywhere)
 SEEN_FROM_AFAR = 0.2                       # firelight this strong shows up past your lantern
 FLAME_FG = [(255, 150, 50), (255, 200, 90), (240, 110, 40), (255, 230, 140)]
 
@@ -45,6 +46,17 @@ def firelight(level) -> tuple[np.ndarray, np.ndarray]:
             stronger = lit > strength
             strength[stronger] = lit[stronger]
             phase[stronger] = (x * 12.9898 + y * 78.233) % (2 * math.pi)
+    lava = tiles == T.LAVA
+    if lava.any():                         # lava glows all round, too much of it to cast shadows
+        glow = lava.astype(np.float32)
+        reach = lava.copy()
+        for step in range(1, LAVA_GLOW + 1):
+            p = np.pad(reach, 1)
+            reach = reach | p[:-2, 1:-1] | p[2:, 1:-1] | (step % 2 == 0) & (p[1:-1, :-2] | p[1:-1, 2:])
+            glow = np.maximum(glow, reach * (1 - step / (LAVA_GLOW + 1)) ** 1.3)
+        stronger = glow > strength
+        strength[stronger] = glow[stronger]
+        phase[stronger] = ((xs * 12.9898 + ys * 78.233) % (2 * math.pi) * np.ones_like(glow))[stronger]
     level.fire = (strength, phase)
     return level.fire
 

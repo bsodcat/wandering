@@ -85,6 +85,15 @@ TILES = [
     Tile(56, "bedroll", "⌐", (175, 140, 95), (35, 32, 28), minutes=0.8, roof=True, natural=False),   # a goblin's bed
     Tile(57, "weapon rack", "╫", (195, 195, 210), (70, 48, 30), walk=False, roof=True, natural=False),
     Tile(58, "chest", "▄", (205, 150, 70), (60, 42, 26), walk=False, roof=True, natural=False),
+    # volcanic ground (game/volcanoes.py)
+    Tile(59, "basalt", ".", (120, 110, 108), (42, 38, 38), minutes=0.8),
+    Tile(60, "ash", ".", (165, 160, 155), (88, 85, 82), minutes=0.9),
+    Tile(61, "lava", "≈", (255, 140, 40), (150, 40, 10), walk=False, natural=False),
+    # forts and cities (game/cities.py), and the carts between towns (game/carts.py)
+    Tile(62, "forge", "■", (255, 120, 50), (90, 35, 20), walk=False, roof=True, natural=False),
+    Tile(63, "anvil", "╤", (170, 170, 180), (60, 58, 56), walk=False, roof=True, natural=False),
+    Tile(64, "archery target", "◙", (230, 80, 70), (75, 65, 50), walk=False, natural=False),
+    Tile(65, "cart", "╥", (190, 140, 80), (70, 50, 32), walk=False, natural=False),
 ]
 assert all(t.id == i for i, t in enumerate(TILES))
 ID = {t.name: t.id for t in TILES}
@@ -93,7 +102,8 @@ ID = {t.name: t.id for t in TILES}
  BOULDER, ROCK, SCREE, ROAD, STREET, BRIDGE, PATH, WOOD_FLOOR, STONE_FLOOR, WALL, STONE_WALL, DOOR,
  BED, TABLE, HEARTH, WELL, STALL, CROPS, FENCE, DOCK, RUBBLE, CAVE_FLOOR, CAVE_WALL, STAIRS_DOWN,
  STAIRS_UP, BATTLEMENT, BARREL, DRY_GRASS, REEDS, FLAGSTONES, TORCH, WHEAT, RYE, RICE, MILLET, OVEN,
- COUNTER, HOOKS, SIGN, WOODPILE, STUMP, TROUGH, DUG, BEDROLL, RACK, CHEST) = range(len(TILES))
+ COUNTER, HOOKS, SIGN, WOODPILE, STUMP, TROUGH, DUG, BEDROLL, RACK, CHEST, BASALT, ASH, LAVA,
+ FORGE, ANVIL, TARGET, CART) = range(len(TILES))
 CONTAINERS = (BARREL, CHEST)                  # things you open: game/shop.py's Container
 GRAINS = [WHEAT, RYE, RICE, MILLET]
 FIELDS = GRAINS + [CROPS]
@@ -111,5 +121,5 @@ WATERY = np.isin(np.arange(len(TILES)), [DEEP_WATER, WATER])
 GROUND = NATURAL & WALK                      # open ground a building or field can go on
 CLEARABLE = NATURAL | np.isin(np.arange(len(TILES)), [TREE, PINE, JUNGLE_TREE, BOULDER])
 SNOWS_ON = np.isin(np.arange(len(TILES)), [GRASS, TALL_GRASS, DIRT, SAND, DRY_GRASS, SCREE, MUD, BUSH, CROPS, PATH, ROAD,
-                                             WHEAT, RYE, MILLET, STUMP, DUG])
-DIGGABLE = np.isin(np.arange(len(TILES)), [GRASS, TALL_GRASS, DRY_GRASS, DIRT, SAND, MUD, SNOW])
+                                             WHEAT, RYE, MILLET, STUMP, DUG, BASALT, ASH])
+DIGGABLE = np.isin(np.arange(len(TILES)), [GRASS, TALL_GRASS, DRY_GRASS, DIRT, SAND, MUD, SNOW, ASH])

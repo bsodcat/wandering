@@ -11,6 +11,7 @@ import tcod
 
 from . import biomes as B
 from . import combat
+from . import gear
 from . import items
 from . import sickness
 from . import tiles as T
@@ -18,7 +19,7 @@ from . import trees
 from .climate import clock_text, date_text, describe_wind, time_of_day
 from .elevation import LEVEL_M
 from .engine import OVERLAYS, Engine
-from .player import NORMAL, body_status, feels_like, stamina_status, wet_status
+from .player import NORMAL, body_status, chill_status, feels_like, insulation, stamina_status, wet_status
 from .ui import LEFT_HIDE, LEFT_SHOW, LEFT_W, RIGHT_W, STRIP_H, TAB_NAMES
 
 TEXT, DIM, TITLE = (220, 220, 220), (130, 130, 130), (255, 220, 120)
@@ -99,6 +100,14 @@ def conditions(e: Engine) -> list[tuple[str, tuple]]:
         text = status(p)
         if text and text not in ("Fresh", "Dry"):
             out.append((text, colour))
+    for flag, on in (("God mode", p.god), ("Noclip", p.noclip), ("Clock paused", e.paused)):
+        if on:
+            out.append((flag, (255, 200, 120)))
+    cold = chill_status(p)
+    if cold:
+        out.append((cold, (120, 170, 230)))
+    if e.on_rock is not None:
+        out.append((f"On top of the {T.TILES[e.on_rock].name}", (190, 185, 170)))
     ill = sickness.status(p)
     if ill:
         out.append((ill + " (wolf fever)" if ill != "Recovering" else "Recovering from fever",
@@ -127,7 +136,7 @@ def draw_stats(console, e: Engine) -> None:
         w.line(f"Indoors   {e.indoor_air:5.1f}°C")
     else:
         w.line(f"Feels like{feels_like(c.air, c.wind, p.wet, e.shelter):5.1f}°C")
-    w.line(f"Clothing  {p.clothing:+5.0f}°C", DIM)
+    w.line(f"Clothing  {insulation(p):+5.0f}°C", DIM)
     w.line(f"Shelter   {e.shelter:5.0%}", DIM)
     w.line(f"Sight     {e.sight_radius():5d}", DIM)
     if e.level is not None and e.level.elev.max() > e.level.elev.min():
@@ -136,6 +145,10 @@ def draw_stats(console, e: Engine) -> None:
     held, weapon = combat.weapon_of(p)
     w.line(f"Attack  {weapon.low:>3}-{weapon.high:<3}", DIM)
     w.line(f"Armour    {combat.protection(p):5d}", DIM)
+    if gear.cover(p):
+        w.line(f"Rain cover{gear.cover(p):5.0%}", DIM)
+    if gear.can_climb(p):
+        w.line("Climbing gear on", DIM)
     w.gap()
     w.line("Condition", TITLE)
     for text, colour in conditions(e):
@@ -190,8 +203,9 @@ def draw_info(console, e: Engine, look: list[str]) -> None:
         keys = ("arrows/numpad/wasd  go", "> <      stairs down/up", "<        (no stairs) map",
                 f"v        {'ground' if e.treetops else 'treetops'} view", ". or 5   wait an hour",
                 "z        rest / sleep", "g x      pick up, dig", "i        inventory",
-                "e        use menu", "bump     fight",
-                f"o        {'normal' if e.relief else 'relief'} view", "m        reveal level")
+                "e        use menu", "q        equipment", "bump     fight",
+                f"o        {'normal' if e.relief else 'relief'} view",
+                f"m        {'only seen' if e.reveal_local else 'whole map'}")
     keys += ("mouse    L use, R walk", "Tab      panel tabs", "c        stats panel", "F11      fullscreen", "Esc      menu, options")
     w.y = max(w.y + 1, console.height - len(keys) - 1)
     for text in keys + (f"Seed {wd.seed}",):
@@ -244,7 +258,7 @@ def draw_minimap(console, e: Engine, seconds: float) -> None:
     ys = np.linspace(0, wd.height - 1, rows * 2).round().astype(int)
     col = world_colours(e, xs, ys)
     for s in wd.sites:
-        if s.kind == "town" and (e.explored[s.x, s.y] or e.reveal):
+        if s.kind in ("city", "town") and (e.explored[s.x, s.y] or e.reveal):
             mark(col, xs, ys, s.x, s.y, SETTLEMENT)
     if blink:
         mark(col, xs, ys, e.player.x, e.player.y, YOU)
@@ -275,7 +289,7 @@ def draw_minimap(console, e: Engine, seconds: float) -> None:
         col[solid] = T.FG[t][solid] * 0.8
         canopy = level.canopy[gx, gy] if e.treetops and level.surface else np.zeros(t.shape, np.uint8)
         col[canopy > 0] = (40, 110, 50)
-        col[~level.explored[gx, gy]] = UNKNOWN
+        col[~(level.explored[gx, gy] | e.reveal_local)] = UNKNOWN
         if blink:
             mark(col, xs, ys, e.lx, e.ly, YOU)
     half_blocks(console, x0, w.y, col)
@@ -356,7 +370,7 @@ def draw_inventory(console, e: Engine) -> None:
         w.gap()
         w.line("Your room's paid for", DIM)
         w.line(f"until {clock_text(e.room_until)}", DIM)
-    keys = ("g        pick up", "x        dig (shovel)", "e        eat, wield, wear",
+    keys = ("g        pick up", "x        dig (shovel)", "e        eat, wield, wear", "q        equipment",
             "walk into a tree with", "an axe to fell it", "walk into a trader", "to trade with them")
     w.y = max(w.y + 1, console.height - len(keys) - 1)
     for text in keys:
@@ -402,6 +416,7 @@ MENU_HINTS = {
     "pause": "Up/Down choose, Enter picks, Esc resumes",
     "options_top": "Up/Down pick, Left/Right change, Esc closes",
     "options": "Up/Down choose, Left/Right change, Esc back",
+    "timeskip": "Left/Right change, Enter on Start, Esc back",
 }
 
 
@@ -417,33 +432,39 @@ def draw_shop(console: tcod.console.Console, e: Engine) -> None:
     console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
     title = f" {shop.title[: w - 4]} "
     console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
-    if hasattr(shop, "tab_spans"):          # a container: its tabs, then one line about it
+    top = y + 1
+    if shop.tabbed:                          # a container: its tabs along the top
         for (tab, tx, tw), label in zip(shop.tab_spans(), shop.tab_labels()):
             on = tab == shop.tab
-            console.print(tx, y + 1, label, fg=TAB_ON if on else DIM, bg=HEADER_BG if on else PANEL_BG)
-        console.print(x + 2, y + 2, shop.greeting[: w - 4], fg=DIM, bg=PANEL_BG)
-    else:
-        for i, line in enumerate(textwrap.wrap(shop.greeting, w - 4)[:2]):
-            console.print(x + 2, y + 1 + i, line, fg=DIM, bg=PANEL_BG)
+            console.print(tx, top, label, fg=TAB_ON if on else DIM, bg=HEADER_BG if on else PANEL_BG)
+        top += 1
+    for i, line in enumerate(shop.greeting_lines()):
+        console.print(x + 2, top + i, line, fg=DIM, bg=PANEL_BG)
     labels = shop.labels()
     rows = shop.visible_rows()
+    bar = shop.scroll_bar()
+    inner = w - (7 if bar else 5)            # room for a label, clear of the scroll bar
     for i in rows:
         ry = shop.row_y(i)
         picked = i == shop.cursor
         if picked:
-            console.draw_rect(x + 1, ry, w - 2, 1, ord(" "), bg=HEADER_BG)
+            console.draw_rect(x + 1, ry, w - (3 if bar else 2), 1, ord(" "), bg=HEADER_BG)
         colour = TAB_ON if picked else TEXT
         if shop.dim(i, e):
             colour = (120, 110, 90) if picked else DIM
-        console.print(x + 3, ry, labels[i][: w - 6], fg=colour)
-    if rows.start > 0:
-        console.print(x + w - 3, shop.row_y(rows.start), "▲", fg=DIM)
-    if rows.stop < len(labels):
-        console.print(x + w - 3, shop.row_y(rows.stop - 1), "▼", fg=DIM)
-    said = shop.said[-1] if shop.said else ""
-    console.print(x + 2, y + h - 4, said[: w - 4], fg=TEXT, bg=PANEL_BG)
+        label = labels[i]
+        console.print(x + 3, ry, label if len(label) <= inner else label[: inner - 3] + "...", fg=colour)
+    if bar is not None:                      # the scroll bar: a track, and a thumb for where you are
+        bx, by, size = bar
+        first = shop.row_y(rows.start)
+        for ry in range(first, first + shop.shown()):
+            thumb = by <= ry < by + size
+            console.print(bx, ry, "█" if thumb else "│", fg=TAB_ON if thumb else DIM)
+    said = shop.said_lines()
+    for i, line in enumerate(said):
+        console.print(x + 2, y + h - 3 - len(said) + i, line, fg=TEXT, bg=PANEL_BG)
     console.print(x + 2, y + h - 3, shop.footer(e)[: w - 4], fg=(240, 210, 90), bg=PANEL_BG)
-    hint = shop.hint
+    hint = shop.hint + ("   Wheel scrolls" if bar is not None and len(shop.hint) + 18 <= w - 4 else "")
     console.print(x + (w - len(hint)) // 2, y + h - 2, hint, fg=DIM, bg=PANEL_BG)
 
 
@@ -454,10 +475,13 @@ def draw_menu(console: tcod.console.Console, menu) -> None:
         return
     console.rgb["fg"] = (console.rgb["fg"] * 0.3).astype(np.uint8)
     console.rgb["bg"] = (console.rgb["bg"] * 0.3).astype(np.uint8)
+    if menu.screen == "controls":
+        draw_controls(console, menu)
+        return
     items = menu.items()
     x, y, w, h = box(len(items), console.width, console.height)
     console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
-    title = " Paused " if menu.screen == "pause" else " Options "
+    title = {"pause": " Paused ", "timeskip": " Time skip "}.get(menu.screen, " Options ")
     console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
     left, right = value_span(len(items), console.width, console.height)
     for i, item in enumerate(items):
@@ -466,7 +490,7 @@ def draw_menu(console: tcod.console.Console, menu) -> None:
         if picked:
             console.draw_rect(x + 1, ry, w - 2, 1, ord(" "), bg=HEADER_BG)
         colour = TAB_ON if picked else TEXT
-        value = menu.value(item) if menu.screen == "options" else ""
+        value = menu.value(item)
         if value:
             console.print(x + 3, ry, item, fg=colour)
             console.print(left, ry, "◄", fg=colour)
@@ -477,6 +501,37 @@ def draw_menu(console: tcod.console.Console, menu) -> None:
             console.print(x + (w - len(item)) // 2, ry, item, fg=colour)
     hint = MENU_HINTS["options_top" if menu.screen == "options" and menu.top is None else menu.screen]
     console.print(x + (w - len(hint)) // 2, y + h - 2, hint, fg=DIM, bg=PANEL_BG)
-    if menu.screen == "options":
+    if menu.screen in ("options", "timeskip"):
         note = menu.note()
         console.print(x + (w - len(note)) // 2, y + h, note, fg=DIM)
+
+
+def draw_controls(console: tcod.console.Console, menu) -> None:
+    """Options > Controls: every key and what it does, in sections, scrolling if it's long."""
+    from .options import CONTROLS_W
+    w = min(console.width - 4, CONTROLS_W)
+    h = console.height - 4
+    x, y = (console.width - w) // 2, 2
+    console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
+    title = " Controls "
+    console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
+    lines = menu.controls_lines()
+    shown = h - 4
+    menu.controls_shown = shown
+    menu.scroll_by(0)
+    key_w = 24
+    for i, (key, what, kind) in enumerate(lines[menu.controls_scroll: menu.controls_scroll + shown]):
+        ry = y + 1 + i
+        if kind == "head":
+            console.print(x + 2, ry, key, fg=TITLE)
+        elif kind == "row":
+            console.print(x + 3, ry, key[: key_w - 2], fg=TAB_ON)
+            console.print(x + 3 + key_w, ry, what[: w - key_w - 6], fg=TEXT)
+    if len(lines) > shown:                   # a scroll bar down the right
+        size = max(1, shown * shown // len(lines))
+        start = round(menu.controls_scroll * (shown - size) / max(1, len(lines) - shown))
+        for i in range(shown):
+            thumb = start <= i < start + size
+            console.print(x + w - 2, y + 1 + i, "█" if thumb else "│", fg=TAB_ON if thumb else DIM)
+    hint = "Up/Down, PgUp/PgDn, wheel scroll   Esc, Enter or click: back"
+    console.print(x + (w - len(hint)) // 2, y + h - 2, hint[: w - 2], fg=DIM, bg=PANEL_BG)

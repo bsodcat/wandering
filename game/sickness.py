@@ -69,7 +69,7 @@ def hour(p, minutes: float, hours: float, health_before: float) -> list[str]:
         s.taken_hold = True
         out.append("The fever has taken hold. You're getting worse by the hour: find hot soup at an inn.")
     p.health -= (LATE_LOSS if s.taken_hold else EARLY_LOSS) * hours
-    if p.health <= 0:
+    if p.health <= 0 and not p.god:
         p.health, p.alive = 0.0, False
         p.cause = f"died of {NAME}"
         out.append(f"You {p.cause}.")

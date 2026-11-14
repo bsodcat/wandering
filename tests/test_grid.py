@@ -85,11 +85,12 @@ class WideScreenTests(unittest.TestCase):
         e = Engine.new(1)
         e.handle_key(KeySym.ESCAPE)
         console = frame(e, 200, 53)
-        from game.options import box, row_y
-        x, y, w, h = box(4, 200, 53)
+        from game.options import PAUSE_ITEMS, box, row_y
+        n = len(PAUSE_ITEMS)
+        x, y, w, h = box(n, 200, 53)
         self.assertEqual(x, (200 - w) // 2)
         self.assertIn("Paused", text(console, x, x + w))
-        self.assertEqual(e.menu.click(x + 20, row_y(4, 3, 200, 53)), "quit")
+        self.assertEqual(e.menu.click(x + 20, row_y(n, PAUSE_ITEMS.index("Quit"), 200, 53)), "quit")
 
 
 if __name__ == "__main__":

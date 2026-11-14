@@ -279,7 +279,7 @@ class SwitchingTests(unittest.TestCase):
         start = e.minutes
         for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)] * 3:
             e.move_local(dx, dy)
-        self.assertLess(e.minutes - start, 30)
+        self.assertLess(e.minutes - start, 60)          # minutes (shallow water is slow), not hours
         self.assertGreater(e.minutes, start)
 
     def test_walking_off_the_edge_enters_the_next_region(self):

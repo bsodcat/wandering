@@ -111,7 +111,7 @@ class TitleScreenTests(unittest.TestCase):
     def test_fits_the_smallest_screen(self):
         lay = main_layout(30)
         self.assertGreaterEqual(lay["title"], 1)
-        self.assertLess(lay["hints"] + 6, 28)
+        self.assertLess(lay["hints"] + 1, 28)            # the hints end above the version line
 
 
 class CreateWorldTests(unittest.TestCase):

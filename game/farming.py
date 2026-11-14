@@ -55,7 +55,7 @@ def herd_for(land: Land) -> str:
         return "reindeer"
     if b in (B.MOUNTAINS, B.PEAKS, B.DESERT, B.SHRUBLAND):
         return "goat"
-    if b in (B.HILLS, B.STEPPE):
+    if b in (B.HILLS, B.STEPPE, B.DOWNS):
         return "sheep"
     if b in (B.FOREST, B.JUNGLE, B.SWAMP):
         return "pig"

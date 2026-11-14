@@ -36,7 +36,11 @@ The game opens on its title screen (`game/title.py`), over a world drifting slow
   makes before you start: its biomes, rivers and settlements, how many towns, villages and inns
   there are, and the town you'll start in. The same seed always makes the same world.
 - **Dev Arena**: a 256x256 test ground with one of everything (see below).
-- **Options**: the display options.
+- **Options**: the display options, and the **Controls** list: every key and what it does
+  (it scrolls with Up/Down, PgUp/PgDn or the mouse wheel).
+- **Updates**: what's new in each version (PgUp/PgDn or the wheel to scroll), **Check for
+  updates** (asks GitHub, in the background, whether there's a newer release; nothing about
+  you is sent) and **Download page** (opens the releases page in your browser).
 - **About**: what the game is, and who made it.
 - **Quit Game**.
 
@@ -85,6 +89,7 @@ stairs lead nowhere; leave by Esc, then Main menu.
 | `x` | | dig where you stand (needs a shovel) |
 | `i` | the Inv tab: what you carry | same |
 | `e` | | the use menu: what you can do here and next to you (talk, trade, pet, attack, open a barrel or chest, sleep, pick up, eat, wield, wear) |
+| `q` | | the equipment menu: your weapon and what you wear in each place, and what it all adds up to |
 | walk into... | | a person: talk (or trade, if they trade); a dog or cat: pet it; a creature: strike it; a tree, with an axe: fell it |
 | Tab | right panel: Info, Map, Log, Inv, hidden | same |
 | `c` | show or hide the stats panel | same |
@@ -93,8 +98,9 @@ stairs lead nowhere; leave by Esc, then Main menu.
 | point with the mouse | the sidebar's Look panel describes that region | the Look panel describes that tile |
 | left click | note what's there in the log | note what's there in the log |
 | hold right button | walk there over regions you know | walk there over ground you know |
-| `m` | reveal the whole map (for development) | reveal this level |
+| `m` | reveal the whole map (for development) | the whole map (on when you arrive) or only what you've seen |
 | Esc | pause menu: Resume, Options, Main menu, Quit | same |
+| `` ` `` | the dev console | same |
 | F11 or Alt+Enter | windowed / fullscreen | same |
 
 ## The screen
@@ -169,9 +175,13 @@ python -m unittest discover -s tests
    its flow direction for local maps later.
 5. Biomes from altitude, temperature and moisture (`game/biomes.py`): oceans, lakes, beach,
    glacier, tundra, taiga, steppe, grassland, shrubland, forest, swamp, desert, savanna,
-   jungle, hills, mountains and snowy peaks.
+   jungle, hills, mountains and snowy peaks. Also **pastureland**, lush open grass with herds of
+   cattle grazing on it, and **downs**, rolling grassy uplands. Both have hardly a tree.
 6. People and roads (`plan_people`), in the order a land gets settled:
-   - Towns where farmland, a mild climate and water meet, at least 16 regions apart.
+   - Three great **stone cities**, each spanning 2 x 2 regions, on a river in good lowland
+     farmland (see Cities below).
+   - Towns where farmland, a mild climate and water meet, at least 16 regions apart. Most are
+     on a river: the score of a place away from one is cut to a quarter.
    - Highways: a minimum spanning tree over the towns by walking time, so every town you can
      walk to is on the network, plus a direct road wherever the network makes a trip 45%
      longer. Roads avoid mountains and river crossings where they can, and later roads
@@ -179,6 +189,7 @@ python -m unittest discover -s tests
    - Villages near roads and water, each with a track out to the nearest road or settlement.
    - Inns every 24 regions or so along long highways.
    - Watchtowers on hills and mountains within sight of a road.
+   - **Forts** on hills, downs and mountains beside the highways.
    - Ruins out in the country and caves where high ground meets low.
    - Towns and villages on the sea are ports.
 
@@ -204,8 +215,54 @@ Settlements are indoors: warm and dry, and you heal faster.
 **Travel** (`game/engine.py`): each step crosses one region and costs that ground's hours.
 Roads take 0.6 h, forest 2 h, mountains 4 h and peaks 8 h. Fording a river adds 1 h. It's
 1.5x slower at night and slower in snow. How far you can see depends on the light, fog and
-rain, and is further from high ground. Mountains block the view. The first time you visit a
+rain, and is further from hills and mountains. Mountains block the view, but high ground
+doesn't hide the regions behind it. The first time you visit a
 settlement, its people tell you about the land around it.
+
+## Cities, forts and carts
+
+**Cities** (`game/cities.py`). Each city covers 2 x 2 regions. Every part is built on its own,
+from a plan that depends only on where the part sits, so the parts meet without a seam:
+- A stone curtain wall runs round the outside, with a tower at each corner. It has gates where
+  the roads come in and halfway along each part's sides, with torches and guards.
+- Broad streets run along the borders between the parts and through each part's middle, with
+  lesser streets every so often. Rivers are bridged.
+- Stone houses fill the blocks, each with its door to a street, and there's a market square in
+  each part.
+- The trades are shared out between the parts: two inns, armourers, a bakery, a butcher's and
+  two smithies. Archers walk the walls.
+
+**Forts** stand over the highways. Each has a square stone curtain wall with corner towers and
+one gate toward the road. Inside are a barracks, a smithy (forge, anvil, racks), the stores, a
+well and archery targets. Four guards keep the gate, three archers watch from the walls, and a
+blacksmith works the forge.
+
+**Guards and archers** (`game/guards.py`) fight on duty: guards strike at wolves, goblins and
+bats within two steps, and archers shoot at any they can see within 9 tiles.
+
+**The blacksmith** sells iron goods: dagger, spear, mace, short sword, axe, shovel, iron helm,
+mail, iron-bound shield, hobnailed boots and climbing gear. They also buy old iron (rusty
+daggers, crude knives, horseshoes, nails and rivets).
+
+**Cleared woods.** Half the towns and villages, and every city and fort, felled the woods around
+them long ago. The trees within a few dozen tiles are stumps and open grass.
+
+**Carts** (`game/carts.py`). Every town and city has a cart on a round of three towns: its own and
+the two nearest by road. It waits a day in each, then takes the road, a bit faster than walking,
+so a cart turns up every couple of days. Where each cart is depends only on the clock, so the
+carts go on along their rounds whether you're there or not. On the world map you can see them
+on the roads (`╥`).
+
+Carts show on the local maps too, as a little cart five tiles across (`┌─☺─┐` over `O═══O`).
+They wait by the square in town, with the carter standing beside them, and roll along the road
+between towns with the carter up front. Walk into a cart or its carter, or click on one, to open
+the ride menu over the world map. It lists the four nearest towns by road from where the cart
+is, how long each ride takes, about when you'd arrive, and the fare: a coin for every three
+hours, at least two. The way to the one picked is marked on the map. Pick
+one and the world map comes up: the cart goes a region along the road every half second, the way
+ahead marked, with a banner saying who's driving, where to, and how long there is to go. The
+hours pass with the weather as it comes (Esc still brings up the menu). When it gets there, the
+map closes and the carter sets you down in that town's square.
 
 ## Local maps
 
@@ -250,10 +307,18 @@ and rough in the hills and mountains. It runs on across region borders like the 
   finds a way round anything too steep.
 - Sight: you see a tile only if the ground between doesn't rise above the line from your eyes
   to it. From a hilltop you see far; a ridge hides what's beyond it, and from the edge of a
-  drop you can't see its foot. The overworld does the same with the world's elevation, and
-  climbing there costs hours (2.5 h per 1000 m up, less on roads).
-- Ground above you is drawn brighter and ground below you darker, and the foot of a rise lies
-  in its shadow. `o` shows the relief: each tile's height (its last digit) on a colour from low
+  drop you can't see its foot. On the overworld climbing costs hours (2.5 h per 1000 m up, less
+  on roads).
+- A local map is shown whole from the moment you walk into it; places you haven't seen are drawn
+  dim, as remembered. `m` switches between that and only what you've seen.
+- **Cold water** (colder than 21 °C: shallow water and flooded rice paddies, and fording a river
+  on the overworld) chills you 0.13 °C a turn (at 21 °C) to 0.35 °C (near freezing). Out of it,
+  the chill goes on sinking in for 30 to 45 turns (the afterdrop), easing off as it goes and
+  worse the longer you were in. A step or a blow is a turn, a long wait one per 6 minutes.
+  Pointing at water tells you how cold it is.
+- Ground above you is drawn brighter and ground below you darker, graded smoothly. Rises cast
+  soft shadows southward, as if lit from the north: darkest at the foot, fading out further
+  away, and longer and deeper the taller the rise. `o` shows the relief: each tile's height (its last digit) on a colour from low
   to high. The stats panel shows your height in metres.
 
 **Things and tools** (`game/items.py`). You start with 20 coins.
@@ -275,6 +340,10 @@ opens: Up/Down or the mouse to choose, Enter to trade, Esc to leave.
 - An **innkeeper** serves hot soup for 4 coins: it warms you, and treats wolf fever.
 - A town's **shopkeeper** (at the armourer's, 08:00-18:00) sells common weapons and armour,
   and buys trinkets and rings.
+- A shop that buys as well as sells (the shopkeeper's and the blacksmith's) has a **Buy** tab
+  and a **Sell** tab at the top. Left/Right, Tab or a click on a tab switches between them.
+- A shop's list shows up to 15 rows at a time, and scrolls (Up/Down, PgUp/PgDn, Home/End or
+  the mouse wheel) when there are more.
 - A **barkeeper** lets a room upstairs for 8 coins. You get a room key, good till 10:00 the
   next morning. Sleep (`z`) in any bed upstairs and you sleep till 07:00, waking rested.
   Without a key the beds are off limits.
@@ -285,7 +354,8 @@ down to a stone cellar of barrels. Each inn has an innkeeper (07:00-21:00) and a
 
 **The use menu** (`e`, or a left click on something you can use). It lists what you can do:
 talk to someone, trade, pet a dog, attack a creature, open a barrel, sleep or rest in a bed,
-pick things up, take the stairs, fell a tree, dig, eat, wield a weapon, wear armour. Pick
+pick things up, take the stairs, fell a tree, dig, eat, wield a weapon, wear armour or open the
+equipment menu. Pick
 something out of reach and you walk over to it first (a walk stops if a creature's in the
 way: it never starts a fight). Clicking on plain ground still just notes it in the log.
 
@@ -305,18 +375,48 @@ the whole of what's picked. It keeps what you leave.
 (the weapon's, less how nimble the creature is) and does the weapon's damage; blows at you are
 cut by your armour.
 
-| Weapon | Damage | | Armour | Stops |
-| --- | --- | --- | --- | --- |
-| fists | 1-3 | | padded jerkin (6 coins) | 1 |
-| club (3 coins) | 2-5 | | leather coat (12) | 2 |
-| dagger (6) | 2-4, quick | | mail shirt (30) | 3 |
-| spear (9) | 3-7 | | iron helm (10) | 1, on your head |
-| short sword (16) | 3-8 | | wooden shield (6) | 1, and turns aside one blow in six |
-| axe, shovel, rusty dagger, crude knife | 2-6, 1-4, 1-3, 1-4 | | | |
+| Weapon | Damage |
+| --- | --- |
+| fists | 1-3 |
+| club (3 coins) | 2-5 |
+| quarterstaff (4) | 2-5, handy |
+| dagger (6) | 2-4, quick |
+| spear (9) | 3-7 |
+| mace (12) | 3-7, heavy |
+| short sword (16) | 3-8 |
+| axe, shovel, rusty dagger, crude knife | 2-6, 1-4, 1-3, 1-4 |
 
-Wield one weapon, and wear one piece of armour in each place, from the use menu. Food (roast
-meat, apples, bread, salt fish) gives back stamina and a little health. You can't rest or wait
-with wolves or goblins about.
+**Equipment** (`game/gear.py`, `q`). Besides the weapon in your hand you can wear one thing in
+each of seven places, and the shopkeeper sells all of it. The equipment menu shows what's in
+each place, what it does and what everything adds up to. Enter on a place lists what you carry
+that would go there.
+
+| Place | Pieces (coins) | What they do |
+| --- | --- | --- |
+| Head | leather cap (3), iron helm (10), fur hat (5), straw hat (2) | the helm is armour; the hats are warm, or shade you from the sun |
+| Cloak | wool cloak (6), oilskin cloak (10), fur cloak (14) | warmth, and keep the rain off you (oilskin best) |
+| Body | padded jerkin (6), leather coat (12), mail shirt (30), fur coat (18) | armour 1, 2, 3, 1; mail is heavy and cold, fur very warm |
+| Shield | wooden shield (6), iron-bound shield (14) | turn aside one blow in six, or one in four |
+| Hands | leather gloves (4), fur mittens (5) | gloves grip better when climbing; mittens are warm but clumsy |
+| Feet | leather boots (6), hobnailed boots (9), fur-lined boots (10) | quicker over rough ground and snow; fur-lined are warm |
+| Harness | climbing gear (20) | climb rock |
+
+Each piece has a few stats: **armour** (stops part of each blow), **block** (a shield's chance
+to stop a blow completely), **warmth** (°C on top of your everyday clothes), **rain cover** (the
+share of rain and snow kept off you), **footing** (time saved on slow ground and in lying snow,
+and off the road on the overworld), **grip** (climbing) and **burden** (heavy gear makes every
+step and every blow more tiring).
+
+**Climbing.** With climbing gear on you can climb onto boulders and rock outcrops (cliffs in the
+hills and mountains, the rock over a cave mouth, a crater rim) and go up or down a rise of three
+or four levels on a rope. It's slow, hard work, and you can't do it when you're exhausted. Each
+climb up can slip, which hurts and leaves you at the bottom. That's 12% in fair weather before
+grip, more in the rain, in snow or in the dark; gloves and hobnailed boots help and mittens make
+it worse. On top of a rock you see over the rocks around and further over the land. Walking
+along the top is quicker than climbing up.
+
+Food (roast meat, apples, bread, salt fish) gives back stamina and a little health. You can't
+rest or wait with wolves or goblins about.
 
 **Wild things** (`game/wild.py`) live on the local maps, and act as the clock runs:
 - **Small game**: rabbits and birds in the open, squirrels in the woods, rats in caves. They
@@ -444,6 +544,33 @@ follows the daylight, fog and rain.
 
 `game/rooms.py` (rooms and corridors) builds the crypts.
 
+## The dev console
+
+`` ` `` (the backquote key) opens a command line across the top of the screen, in a game or in
+the arena. Type a command and press Enter. Up/Down recall what you typed, Tab finishes a command
+or an item or creature name, PageUp/PageDown or the mouse wheel scroll, and Esc or `` ` `` closes it.
+
+| Command | |
+| --- | --- |
+| `help [command]` | the commands |
+| `god [on/off]` | nothing hurts you: health, stamina and warmth stay full |
+| `noclip [on/off]` | walk through anything, up any height |
+| `heal` | full health, stamina and warmth, dry, fever cured |
+| `set <stat> <value>` | health, stamina, body, wet, clothing or coins |
+| `give <item> [n]`, `drop <item> [n]` | into your bag, or onto the ground (part of a name will do) |
+| `items [word]`, `creatures` | what there is to give and spawn |
+| `spawn <creature> [n]` | wolves, goblins, rabbits, bats... or sheep, hens, dogs, beside you |
+| `kill [near/all]` | the wild things within 12 steps, or all of them on this map |
+| `time` | the date and time |
+| `time forward <n>[m/h/d]` | time runs on, with everything happening as it would |
+| `time jump <n>[m/h/d]`, `time set <hh:mm>` | the clock moves straight on; people and creatures catch up |
+| `time pause`, `time resume` | stop the clock (you can still walk about), start it again |
+| `weather <kind/auto>` | clear, cloudy, overcast, fog, rain, storm, snow, blizzard |
+| `tp <x> <y>` | to a tile on this map, or a region on the overworld |
+| `reveal [on/off]`, `where`, `seed`, `clear` | |
+
+The stats panel shows God mode, Noclip and Clock paused while they're on.
+
 ## Layout
 
 ```
@@ -452,14 +579,19 @@ game/worldgen.py   the world generator: terrain, climate, water, biomes, people 
 game/biomes.py     biome table: looks, travel time, shelter
 game/localgen.py   region local maps: seamless terrain, rivers, roads
 game/structures.py towns, villages, inns, docks, towers, ruins, caves, and the levels below and above
+game/cities.py     stone cities over 2 x 2 regions, forts, cleared woods
+game/guards.py     guards and archers fighting off what comes near
+game/carts.py      carts between the towns, and riding them
 game/tiles.py      local tile table: looks, walking, sight, step time, roofs
 game/trees.py      trunks and crowns, seasons, keeping ways in clear
 game/people.py     townsfolk and animals: who lives where, their hours, walking, talking
 game/wild.py       wolves, small game, bats and goblins: where they live, how they behave
-game/combat.py     weapons, armour, and how blows land
+game/combat.py     weapons, and how blows land
+game/gear.py       equipment: the places you wear things, their stats, climbing
 game/sickness.py   wolf fever, soup and sleep
 game/items.py      things you carry, dig up and find in barrels and chests
-game/shop.py       shops, the use menu and containers (barrels, chests)
+game/shop.py       shops, the use menu, the equipment menu and containers (barrels, chests)
+game/devconsole.py the dev console and its commands
 game/farming.py    which grain and herd suit a climate, and the fields through the year
 game/light.py      firelight from hearths and torches, and how it flickers
 game/level.py      a local map, its stairs and its canopy layer

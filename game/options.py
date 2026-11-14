@@ -1,7 +1,8 @@
 """Settings, and the pause menu and options screen that change them.
 
-Esc opens the pause menu (Resume, Options, Main menu, Quit); the title screen opens the options
-screen on its own. The options screen sets:
+Esc opens the pause menu (Resume, Options, Main menu, Quit); the title screen opens the
+options screen on its own. The time skip screen (also T in a game) picks how many years to pass
+and what they bring (game/eras.py); Start hands that to the game (game/passage.py counts the years). The options screen sets:
 
 - Display: windowed or fullscreen (Alt+Enter or F11 toggles it any time).
 - Font: the classic Terminal bitmap font, or a TrueType font drawn at any size.
@@ -140,7 +141,10 @@ def size_text(size) -> str:
 # ----------------------------------------------------------------- the menus
 
 PAUSE_ITEMS = ["Resume", "Options", "Main menu", "Quit"]
-OPTION_ROWS = ["Display", "Font", "Font size", "Scale", "Back"]
+OPTION_ROWS = ["Display", "Font", "Font size", "Scale", "Controls", "Back"]
+CONTROLS_W = 80                    # the Controls list's box, at most
+SKIP_ROWS = ["Pass", "Change", "Start", "Back"]     # the time skip (game/eras.py)
+STEPPED = ("Display", "Font", "Font size", "Scale", "Pass", "Change")   # rows with a ◄ value ►
 BOX_W = 46
 VALUE_X = 16                       # where a row's ◄ value ► starts, from the box's left edge
 
@@ -170,19 +174,50 @@ class Menu:
         self.cols, self.rows = SCREEN_W, SCREEN_H   # the screen in tiles, as it's drawn
         self.shown = None                # (scale, tiles across, tiles down) as last shown, from main.py
         self.top: str | None = "pause"
+        self.skip_years = 1                # index into eras.SKIP_YEARS: a thousand years
+        self.skip_change = 0               # index into eras.CHANGES
+        self.skip_back: str | None = None       # where Back from the time skip goes
+        self.controls_scroll = 0           # lines down the Controls list
+        self.controls_shown = 20           # how many lines of it fit (kept up to date as it's drawn)
 
     @property
     def open(self) -> bool:
         return self.screen is not None
 
     def items(self) -> list[str]:
-        return PAUSE_ITEMS if self.screen == "pause" else OPTION_ROWS
+        if self.screen == "controls":
+            return ["Back"]
+        return PAUSE_ITEMS if self.screen == "pause" else SKIP_ROWS if self.screen == "timeskip" else OPTION_ROWS
+
+    def controls_lines(self) -> list:
+        from .controls import lines
+        return lines(min(self.cols - 4, CONTROLS_W) - 6)
+
+    def scroll_by(self, lines: int) -> None:
+        """Scrolls the Controls list (the mouse wheel, PageUp/PageDown)."""
+        if self.screen != "controls":
+            return
+        most = max(0, len(self.controls_lines()) - self.controls_shown)
+        self.controls_scroll = max(0, min(most, self.controls_scroll + lines))
 
     def show(self, screen: str | None) -> None:
         self.screen, self.cursor = screen, 0
 
+    def open_skip(self, back_to: str | None) -> None:
+        self.skip_back = back_to
+        self.show("timeskip")
+
+    def skip_choice(self) -> tuple[int, str]:
+        from .eras import CHANGES, SKIP_YEARS
+        return SKIP_YEARS[self.skip_years], CHANGES[self.skip_change].name
+
     def value(self, row: str) -> str:
         s = self.settings
+        if row in ("Pass", "Change"):
+            from .eras import CHANGES, SKIP_YEARS, years_text
+            return years_text(SKIP_YEARS[self.skip_years]) if row == "Pass" else CHANGES[self.skip_change].name
+        if row not in OPTION_ROWS:
+            return ""
         if row == "Display":
             return DISPLAYS[s.fullscreen]
         if row == "Font":
@@ -206,7 +241,11 @@ class Menu:
         return ""
 
     def note(self) -> str:
-        """What the settings come to, under the options box."""
+        """What the settings come to, under the options box (or, for the time skip, what the
+        change does)."""
+        if self.screen == "timeskip":
+            from .eras import CHANGES
+            return f"{self.skip_choice()[1]}: {CHANGES[self.skip_change].blurb}"
         s = self.settings
         cw, ch = s.cell(self.area)
         if self.shown is not None:
@@ -227,6 +266,13 @@ class Menu:
             i = choices.index(current) if current in choices else 0
             return choices[(i + step) % len(choices)]
 
+        if row in ("Pass", "Change"):
+            from .eras import CHANGES, SKIP_YEARS
+            if row == "Pass":
+                self.skip_years = (self.skip_years + step) % len(SKIP_YEARS)
+            else:
+                self.skip_change = (self.skip_change + step) % len(CHANGES)
+            return
         if row == "Display":
             s.fullscreen = not s.fullscreen
         elif row == "Scale":
@@ -243,10 +289,21 @@ class Menu:
         self.change("Display", 1)
 
     def activate(self) -> str | None:
-        """Enter on the picked row. Returns "quit" to leave the game, "title" for the title screen."""
+        """Enter on the picked row. Returns "quit" to leave the game, "title" for the title screen,
+        "skip" to pass the ages (Menu.skip_choice says how)."""
         item = self.items()[self.cursor]
         if item == "Resume":
             self.show(None)
+        elif item == "Start":
+            self.show(None)
+            return "skip"
+        elif item == "Back" and self.screen == "timeskip":
+            self.show(self.skip_back)
+        elif item == "Back" and self.screen == "controls":
+            self.back()
+        elif item == "Controls":
+            self.show("controls")
+            self.controls_scroll = 0
         elif item == "Options":
             self.show("options")
         elif item == "Quit":
@@ -261,24 +318,42 @@ class Menu:
         return None
 
     def back(self) -> None:
-        self.show(self.top if self.screen == "options" else None)
+        if self.screen == "controls":
+            self.show("options")
+            self.cursor = OPTION_ROWS.index("Controls")
+            return
+        self.show(self.top if self.screen == "options" else self.skip_back if self.screen == "timeskip" else None)
 
     def handle_key(self, sym, mod: int = 0) -> str | None:
         """A key while a menu is open. Returns "quit" to leave the game."""
         n = len(self.items())
+        if self.screen == "controls":
+            steps = {KeySym.UP: -1, KeySym.KP_8: -1, KeySym.W: -1, KeySym.DOWN: 1, KeySym.KP_2: 1, KeySym.S: 1,
+                     KeySym.PAGEUP: -self.controls_shown, KeySym.PAGEDOWN: self.controls_shown,
+                     KeySym.HOME: -10_000, KeySym.END: 10_000}
+            if sym in steps:
+                self.scroll_by(steps[sym])
+            elif sym in (KeySym.ESCAPE, KeySym.RETURN, KeySym.KP_ENTER, KeySym.SPACE):
+                if sym == KeySym.RETURN and mod & Modifier.ALT:
+                    self.toggle_fullscreen()
+                else:
+                    self.back()
+            return None
         if sym == KeySym.ESCAPE:
             self.back()
         elif sym in (KeySym.UP, KeySym.KP_8, KeySym.W):
             self.cursor = (self.cursor - 1) % n
         elif sym in (KeySym.DOWN, KeySym.KP_2, KeySym.S):
             self.cursor = (self.cursor + 1) % n
-        elif sym in (KeySym.LEFT, KeySym.KP_4, KeySym.A) and self.screen == "options":
+        elif sym in (KeySym.LEFT, KeySym.KP_4, KeySym.A) and self.screen in ("options", "timeskip"):
             self.change(self.items()[self.cursor], -1)
-        elif sym in (KeySym.RIGHT, KeySym.KP_6, KeySym.D) and self.screen == "options":
+        elif sym in (KeySym.RIGHT, KeySym.KP_6, KeySym.D) and self.screen in ("options", "timeskip"):
             self.change(self.items()[self.cursor], 1)
         elif sym in (KeySym.RETURN, KeySym.KP_ENTER, KeySym.SPACE):
             if sym == KeySym.RETURN and mod & Modifier.ALT:
                 self.toggle_fullscreen()
+            elif self.items()[self.cursor] in ("Pass", "Change"):
+                self.change(self.items()[self.cursor], 1)
             else:
                 return self.activate()
         return None
@@ -299,13 +374,17 @@ class Menu:
             self.cursor = i
 
     def click(self, sx: int, sy: int) -> str | None:
-        """A left click: on a row's ◄ or ► steps that setting; anywhere else on a row picks it."""
+        """A left click: on a row's ◄ or ► steps that setting; anywhere else on a row picks it.
+        On the Controls list, a click goes back."""
+        if self.screen == "controls":
+            self.back()
+            return None
         i = self.row_at(sx, sy)
         if i is None:
             return None
         self.cursor = i
         item = self.items()[i]
-        if self.screen == "options" and item in ("Display", "Font", "Font size", "Scale"):
+        if item in STEPPED:
             left, right = value_span(len(self.items()), self.cols, self.rows)
             self.change(item, -1 if left <= sx < (left + right) // 2 else 1)
             return None

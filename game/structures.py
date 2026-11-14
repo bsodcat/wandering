@@ -175,7 +175,7 @@ def furnish(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, 
         for _ in range(count):
             while walls and not put_inside(t, walls.pop(), tile, box):
                 pass
-    middle_tiles = [c for c in inside if t[c] == T.WOOD_FLOOR and not by_door(*c)
+    middle_tiles = [c for c in inside if t[c] in (T.WOOD_FLOOR, T.STONE_FLOOR) and not by_door(*c)
                     and c[0] not in (x0 + 1, x0 + w - 2) and c[1] not in (y0 + 1, y0 + h - 2)]
     rng.shuffle(middle_tiles)
     for _ in range(tables):
@@ -248,7 +248,7 @@ def houses(level: Level, rng: random.Random, count: int, ring, sizes=((7, 10), (
     cx, cy = middle(level)
     doors = []
     for _ in range(count):
-        box = place_box(level, rng, sizes, ring)
+        box = place_box(level, rng, sizes, ring) or place_box(level, rng, sizes, (ring[0], ring[1] + 24))   # (a river in the way)
         if box is None:
             continue
         x0, y0, w, h = box
@@ -608,12 +608,19 @@ def build_cave(level: Level, site, rng: random.Random) -> None:
 
 BUILDERS = {"town": build_town, "village": build_village, "inn": build_inn, "tower": build_tower,
             "ruins": build_ruins, "cave": build_cave}
+CLEARED = 0.5      # how often a town or village has cleared the woods around it
 
 
 DEFAULT_LAND = farming.Land(0, 12.0, 0.5, -0.5)   # a temperate grassland, when none is given
 
 
 def build(level: Level, site, rng: random.Random, land=None) -> None:
+    from . import cities
+    if site.kind in ("city", "fort"):
+        (cities.build_city if site.kind == "city" else cities.build_fort)(level, site, rng, land)
+        return
+    if site.kind in ("town", "village") and random.Random(f"clear{site.name}").random() < CLEARED:
+        cities.clear_woods(level, rng, 70 if site.kind == "town" else 50)   # felled long ago for timber and fields
     builder = BUILDERS[site.kind]
     if site.kind in ("town", "village", "inn"):
         builder(level, site, rng, land)
@@ -767,7 +774,7 @@ def tower_floor(key: tuple, site, rng: random.Random) -> Level:
         tiles[cx - 3, cy] = T.BED
         tiles[cx, cy - 2] = T.TABLE
     name = f"Top of {site.name}" if roof else f"{site.name}, floor {key[3] + 1}"
-    return Level(key, name, tiles, exits, indoor_air=14.0, lookout=roof)
+    return Level(key, name, tiles, exits, indoor_air=14.0, lookout=roof, footprint=outer)
 
 
 INN_ROOMS = 4               # guest rooms along each side of the corridor upstairs

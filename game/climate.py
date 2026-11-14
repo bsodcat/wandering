@@ -28,6 +28,9 @@ MIDSUMMER = 0.375            # of the way through the year (the middle of summer
 SEASON_SWING = 14.0          # degrees C between the yearly mean and midsummer, at the poles
 DAY_SWING = 5.0              # degrees C between the daily mean and mid-afternoon
 FRONT_SPEED = 0.6            # world cells per hour that weather drifts east
+WEATHER_CYCLE = 100 * DAYS_PER_YEAR * MINUTES_PER_DAY   # the weather's pattern repeats after this
+                                                        # (minutes), so a million years on it still
+                                                        # changes hour by hour in float32 noise
 
 
 # ----------------------------------------------------------------- calendar
@@ -153,7 +156,7 @@ class Climate:
         arrays that broadcast together, e.g. a column and a row for a rectangle."""
         w = self.world
         xs, ys = np.broadcast_arrays(np.asarray(xs), np.asarray(ys))
-        hours = minutes / MINUTES_PER_HOUR
+        hours = minutes % WEATHER_CYCLE / MINUTES_PER_HOUR   # the noise only needs to tell hours apart
         moist = w.moisture[xs, ys]
         lat = latitude(ys, w.height)
         drift = xs - FRONT_SPEED * hours

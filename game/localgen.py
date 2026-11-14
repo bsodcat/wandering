@@ -8,7 +8,12 @@ y * LOCAL_H), so neighbouring regions join without a seam:
 - Ground and cover: each biome has a ground tile and layers of cover (trees, bushes, rocks,
   reeds) scattered by clustered noise, so forests have clearings and grassland has copses.
   Trees are thinned so no two trunks touch, and each spreads a crown of leaves on the layer
-  above (game/trees.py). Mountains get cliffs along ridge lines.
+  above (game/trees.py). Mountains get cliffs along ridge lines. The Vegetation setting
+  (game/tweaks.py) thins or thickens the trees, bushes, tall grass and reeds.
+- Volcanoes (game/volcanoes.py): basalt and ash on the cone, a crater at the vent (a lava lake
+  if it's live, a dry hollow if dormant); lava fields of black rock, still molten in places
+  while the volcanoes are active; fresh ash drifted over the land downwind.
+- Springs: a pool where groundwater comes up, at the head of its stream.
 - Water: oceans and lakes, shallow near the shore and deep further out.
 - Rivers and roads are drawn between region "nodes" (a fixed point in each region), with a
   meander that depends only on the two ends, so both sides of a border draw the same line.
@@ -62,10 +67,27 @@ RECIPES = {
     B.JUNGLE: (T.GRASS, [(T.TALL_GRASS, 0.2, True), (T.BUSH, 0.15, True), (T.JUNGLE_TREE, 0.55, True)]),
     B.HILLS: (T.GRASS, [(T.DIRT, 0.3, True), (T.SCREE, 0.1, True), (T.TREE, 0.06, True),
                         (T.BOULDER, 0.05, True)]),
+    B.PASTURE: (T.GRASS, [(T.TALL_GRASS, 0.2, True), (T.BUSH, 0.025, True), (T.TREE, 0.006, False),
+                          (T.BOULDER, 0.003, False)]),
+    B.DOWNS: (T.GRASS, [(T.TALL_GRASS, 0.22, True), (T.DIRT, 0.08, True), (T.SCREE, 0.04, True),
+                        (T.TREE, 0.01, True), (T.BOULDER, 0.02, True)]),
     B.MOUNTAINS: (T.SCREE, [(T.SNOW, 0.15, True), (T.BOULDER, 0.06, False)]),
     B.PEAKS: (T.SNOW, [(T.ICE, 0.2, True), (T.BOULDER, 0.03, False)]),
+    B.VOLCANO: (T.BASALT, [(T.ASH, 0.35, True), (T.SCREE, 0.2, True), (T.BOULDER, 0.04, False)]),
 }
-CLIFFS = {B.MOUNTAINS: (0.84, 0.45), B.PEAKS: (0.72, 0.25)}   # ridge line and blob thresholds for rock
+CLIFFS = {B.MOUNTAINS: (0.84, 0.45), B.PEAKS: (0.72, 0.25), B.VOLCANO: (0.9, 0.55)}   # ridge line and blob thresholds for rock
+# Lava fields, by the Eruptions setting: grown over when quiet, molten in places when live.
+LAVA_FIELDS = [
+    (T.BASALT, [(T.DRY_GRASS, 0.35, True), (T.BUSH, 0.06, True), (T.BOULDER, 0.03, False)]),
+    (T.BASALT, [(T.DRY_GRASS, 0.15, True), (T.BUSH, 0.02, True), (T.BOULDER, 0.04, False)]),
+    (T.BASALT, [(T.ASH, 0.2, True), (T.LAVA, 0.05, True), (T.BOULDER, 0.03, False)]),
+    (T.BASALT, [(T.ASH, 0.3, True), (T.LAVA, 0.09, True), (T.BOULDER, 0.03, False)]),
+]
+GROWTH = [T.TREE, T.PINE, T.JUNGLE_TREE, T.BUSH, T.TALL_GRASS, T.REEDS]   # what the Vegetation setting scales
+CRATER = (26, 13)          # tiles: the crater's half-width and half-height
+CRATER_FLOOR = [T.GRASS, T.ASH, T.LAVA, T.LAVA]   # by the Eruptions setting (an extinct crater that
+                                                  # filled with water is a lake on the world map instead)
+ASH_COVER = 0.6            # at full ash, this share of open ground is ash
 
 
 # ----------------------------------------------------------------- noise
@@ -112,6 +134,9 @@ def terrain(world, gx0: int, gy0: int, w: int, h: int) -> tuple[np.ndarray, np.n
     rx = np.clip(np.floor(gx / LOCAL_W + jx), 0, world.width - 1).astype(int)
     ry = np.clip(np.floor(gy / LOCAL_H + jy), 0, world.height - 1).astype(int)
     biome = world.biome[rx, ry]
+    tw = world.tweaks
+    growth = tw.value("Vegetation")
+    eruptions = tw.index("Eruptions")
     cluster = (n["cluster"][(gx / 18, gy / 9)] + 1) / 2
     detail = n["detail"][(gx / 10, gy / 5)]
     tiles = np.full((w, h), T.GRASS, np.uint8)
@@ -120,17 +145,37 @@ def terrain(world, gx0: int, gy0: int, w: int, h: int) -> tuple[np.ndarray, np.n
         here = biome == b
         if b in B.WATER:
             continue
-        ground, layers = RECIPES.get(b, (T.GRASS, []))
+        ground, layers = LAVA_FIELDS[eruptions] if b == B.LAVA_FIELD else RECIPES.get(b, (T.GRASS, []))
         tiles[here] = ground
         ground_of[here] = ground
         for salt, (tile, density, clustered) in enumerate(layers, start=10):
+            if tile in GROWTH:
+                density = min(0.95, density * growth)
             chance = density * (0.15 + 1.7 * cluster) if clustered else density
             tiles[here & (hash01(gx, gy, salt + b * 31) < chance)] = tile
         if b in CLIFFS:
             line, blob = CLIFFS[b]
             ridge = 1 - np.abs(n["ridge"][(gx / 30, gy / 15)])
             tiles[here & ((ridge > line) | (detail > blob))] = T.ROCK
+    if world.ash is not None:               # fresh ash drifted over the open ground
+        ash = world.ash[rx, ry]
+        if ash.max() > 0.02:
+            covered = np.isin(tiles, [T.GRASS, T.TALL_GRASS, T.DRY_GRASS, T.DIRT, T.SAND, T.SNOW, T.SCREE, T.BUSH])
+            tiles[covered & (hash01(gx, gy, 5) < ash * ASH_COVER * (0.4 + 1.2 * cluster))] = T.ASH
     trees.thin(tiles, hash01(gx, gy, 7), ground_of)
+    for v in world.volcanoes:               # each vent's crater
+        cx, cy = v.x * LOCAL_W + LOCAL_W // 2, v.y * LOCAL_H + LOCAL_H // 2
+        if world.biome[v.x, v.y] != B.VOLCANO or not (gx0 - CRATER[0] * 2 < cx < gx0 + w + CRATER[0] * 2
+                                                       and gy0 - CRATER[1] * 2 < cy < gy0 + h + CRATER[1] * 2):
+            continue
+        wobble = detail * 0.18
+        d = np.sqrt(((gx - cx) / CRATER[0]) ** 2 + ((gy - cy) / CRATER[1]) ** 2) + wobble
+        tiles[(d > 1.0) & (d < 1.25)] = T.ROCK                     # the rim
+        tiles[(d > 1.0) & (d < 1.25) & (hash01(gx, gy, 9) < 0.12)] = T.SCREE   # gaps to climb through
+        tiles[d <= 1.0] = T.ASH
+        floor = CRATER_FLOOR[eruptions]
+        if floor != T.ASH:
+            tiles[d <= (0.75 if floor == T.LAVA else 0.85)] = floor
     water = np.isin(biome, B.WATER)
     near_land = dilate(~water, 3)
     tiles[water] = T.DEEP_WATER
@@ -206,6 +251,12 @@ def draw_waterways(world, tiles: np.ndarray, gx0: int, gy0: int) -> None:
             put(stroke(pts, *shallow), T.WATER)
             if deep:
                 put(stroke(pts, *deep), T.DEEP_WATER)
+    if world.spring is not None:            # a pool where each spring comes up
+        for cx, cy in zip(*np.nonzero(world.spring[max(0, cx0): cx1 + 1, max(0, cy0): cy1 + 1])):
+            cx, cy = int(cx) + max(0, cx0), int(cy) + max(0, cy0)
+            nx, ny = node(world, cx, cy)
+            put(stroke([(round(nx), round(ny))], 5, 3), T.REEDS, only=T.NATURAL & T.WALK)
+            put(stroke([(round(nx), round(ny))], 4, 2), T.WATER)
     for (a, b), width in world.road_edges.items():
         if not (near(a) or near(b)):
             continue
@@ -246,8 +297,30 @@ def generate_region(world, x: int, y: int) -> Level:
         people.populate(level, site, random.Random(world.region_seed(x, y) + 1))
     bury(level, random.Random(world.region_seed(x, y) + 2), BURIED.get(site.kind if site else None, BURIED[None]),
          town=site is not None and site.kind == "town")
+    if site is None and world.biome[x, y] == B.PASTURE:
+        graze(level, farming.herd_for(farming.land_at(world, x, y)), random.Random(world.region_seed(x, y) + 4))
     wild.populate_region(level, world, x, y, site, random.Random(world.region_seed(x, y) + 3))
     return level
+
+
+def graze(level: Level, animal: str, rng: random.Random) -> None:
+    """Pastureland: a few herds out on the open grass, each keeping to its own stretch of it."""
+    t = level.tiles
+    for _ in range(rng.randint(1, 3)):
+        for _ in range(30):
+            cx, cy = rng.randrange(20, level.width - 20), rng.randrange(10, level.height - 10)
+            if t[cx, cy] in (T.GRASS, T.TALL_GRASS):
+                break
+        else:
+            continue
+        area = [(x, y) for x in range(cx - 14, cx + 15) for y in range(cy - 7, cy + 8)
+                if level.in_bounds(x, y) and T.WALK[t[x, y]] and not T.WATERY[t[x, y]]
+                and (x - cx) ** 2 + (2 * (y - cy)) ** 2 <= 14 ** 2]
+        if len(area) < 30:
+            continue
+        for _ in range(rng.randint(4, 8)):
+            x, y = rng.choice(area)
+            level.actors.append(people.Actor(animal, animal, x, y, work=area))
 
 
 BURIED = {None: 1 / 150, "ruins": 1 / 50, "town": 1 / 250, "village": 1 / 200}   # share of open ground with something under it

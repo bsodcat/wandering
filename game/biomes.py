@@ -42,12 +42,16 @@ BIOMES = [
     Biome(15, "Hills", "^", (155, 145, 105), (78, 74, 54), 2.0, 0.2),
     Biome(16, "Mountains", "▲", (165, 155, 145), (78, 74, 70), 4.0, 0.2, blocks_view=True),
     Biome(17, "Snowy peaks", "▲", (245, 245, 252), (150, 152, 168), 8.0, 0.1, blocks_view=True),
+    Biome(18, "Volcano", "▲", (215, 95, 55), (70, 38, 32), 5.0, 0.05, blocks_view=True),   # game/volcanoes.py
+    Biome(19, "Lava field", "░", (120, 100, 95), (45, 36, 34), 2.5, 0.0),
+    Biome(20, "Pastureland", '"', (140, 195, 85), (52, 96, 36), 1.0, 0.05),   # lush open grazing land
+    Biome(21, "Downs", "∩", (150, 170, 95), (66, 84, 44), 1.6, 0.1),           # rolling grassy hills, few trees
 ]
 assert all(b.id == i for i, b in enumerate(BIOMES))
 BY_NAME = {b.name: b for b in BIOMES}
 
 DEEP_OCEAN, OCEAN, LAKE, BEACH, GLACIER, TUNDRA, TAIGA, STEPPE, GRASSLAND, SHRUBLAND, FOREST, \
-    SWAMP, DESERT, SAVANNA, JUNGLE, HILLS, MOUNTAINS, PEAKS = range(len(BIOMES))
+    SWAMP, DESERT, SAVANNA, JUNGLE, HILLS, MOUNTAINS, PEAKS, VOLCANO, LAVA_FIELD, PASTURE, DOWNS = range(len(BIOMES))
 WATER = (DEEP_OCEAN, OCEAN, LAKE)
 
 # Lookup tables, indexed by biome id.

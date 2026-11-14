@@ -405,7 +405,7 @@ class Wilds:
                 self.engine.say(f"{the} {b.verb} you! ({dmg})")
                 if c.kind == "wolf":
                     sickness.bitten(p, self.now, self.rng)
-                if p.health <= 0:
+                if p.health <= 0 and not p.god:
                     p.health, p.alive = 0.0, False
                     p.cause = f"were killed by {a_name(c.name)}"
                     self.engine.say(f"You {p.cause}.")
@@ -996,9 +996,9 @@ def describe(c) -> list[str]:
 # ----------------------------------------------------------------- who lives where
 
 WOODED = (B.FOREST, B.TAIGA, B.JUNGLE)
-OPEN = (B.GRASSLAND, B.STEPPE, B.SAVANNA, B.SHRUBLAND, B.HILLS, B.TUNDRA)
+OPEN = (B.GRASSLAND, B.STEPPE, B.SAVANNA, B.SHRUBLAND, B.HILLS, B.TUNDRA, B.PASTURE, B.DOWNS)
 WOLF_CHANCE = {B.FOREST: 0.5, B.TAIGA: 0.5, B.HILLS: 0.3, B.TUNDRA: 0.3, B.GRASSLAND: 0.25, B.STEPPE: 0.25,
-               B.SHRUBLAND: 0.25, B.MOUNTAINS: 0.2, B.JUNGLE: 0.12, B.SWAMP: 0.12, B.SAVANNA: 0.12}
+               B.SHRUBLAND: 0.25, B.MOUNTAINS: 0.2, B.DOWNS: 0.25, B.PASTURE: 0.15, B.JUNGLE: 0.12, B.SWAMP: 0.12, B.SAVANNA: 0.12}
 CAVE_WOLVES = 0.6        # a cave's region has a pack about its mouth this often
 
 

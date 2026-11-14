@@ -41,7 +41,7 @@ class StartTests(unittest.TestCase):
     def test_the_start_town_tells_you_about_the_land_around_it(self):
         e = engine()
         p = e.player
-        self.assertTrue(e.explored[p.x + 10, p.y] or not e.world.in_bounds(p.x + 10, p.y))
+        self.assertTrue(not e.world.in_bounds(p.x + 10, p.y) or e.explored[p.x + 10, p.y])
         self.assertGreater(e.explored.sum(), e.visible.sum() * 3)
         self.assertTrue(any("tell you about the land" in m for m in e.messages))
 

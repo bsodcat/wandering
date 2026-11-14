@@ -54,6 +54,7 @@ def stand_beside(e, a) -> tuple[int, int]:
         if e.level.walkable(x, y) and people.actor_at(e.level, x, y) is None \
                 and abs(int(e.level.elev[x, y]) - int(e.level.elev[a.x, a.y])) <= 2:
             e.lx, e.ly = x, y
+            e.player.in_cold_water = e.player.afterdrop = 0     # put there, not walked out of a river
             e.update_view()
             return dx, dy
     raise unittest.SkipTest("no room beside them")
@@ -240,9 +241,9 @@ class ToolTests(unittest.TestCase):
         e.move_local(*step)                            # no logs: just a word about the axe
         self.assertIsNone(e.shop)
         self.assertIn("axe", e.messages[-1])
+        step = next(s for s in [step, (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)]
+                    if e.level.walkable(e.lx + s[0], e.ly + s[1]))  # a spot beside you he can stand on
         jack.x, jack.y = e.lx + step[0], e.ly + step[1]
-        if not e.level.walkable(jack.x, jack.y):
-            step = stand_beside(e, jack)
         e.player.inventory.add("log", 4)
         coins = e.player.inventory.count("coin")
         e.move_local(*step)
@@ -265,6 +266,15 @@ class ToolTests(unittest.TestCase):
 
 
 class DiggingTests(unittest.TestCase):
+    def setUp(self):                              # no groundwater to strike (that's tested in test_tweaks)
+        from game import engine as engine_module
+        self._strike = engine_module.GROUNDWATER_STRIKE
+        engine_module.GROUNDWATER_STRIKE = 0.0
+
+    def tearDown(self):
+        from game import engine as engine_module
+        engine_module.GROUNDWATER_STRIKE = self._strike
+
     def test_dig_finds_what_is_buried_and_leaves_turned_earth(self):
         e = flat_engine()
         e.level.elev[:] = 4
@@ -280,7 +290,7 @@ class DiggingTests(unittest.TestCase):
         self.assertIn("already", e.messages[-1])
         e.lx += 1
         e.handle_key(KeySym.X)
-        self.assertIn("nothing", e.messages[-1])
+        self.assertTrue(any("nothing" in m for m in e.messages[-3:]))   # (the weather may have news after)
 
     def test_no_digging_floors_or_underground(self):
         e = flat_engine(tile=T.WOOD_FLOOR)

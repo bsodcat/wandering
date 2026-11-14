@@ -7,6 +7,10 @@ Each settlement is populated when its map is built:
             water to fish and woods to cut
 - villages: farmers for the fields, and a fisherman and a lumberjack in the same way
 - inns:     an innkeeper, and a barkeeper who lets the rooms upstairs for the night
+- cities:   each part has the trades that are in it (game/cities.py), a blacksmith at a
+            smithy, guards at the gates and archers on the walls
+- forts:    four guards and three archers, who sleep in the barracks, and a blacksmith
+- carters:  beside a cart while it's in town (game/carts.py); they'll take you to a near town
 - animals:  a herd in each pasture (what suits the land, see farming.py), and hens about
             the houses; and in a town, a dog or a cat that follows you about if you're near
             (walk into it to pet it)
@@ -25,6 +29,9 @@ Everyone lives in a house (the innkeeper at the inn) and keeps hours:
     shopkeeper   08:00-18:00  sells weapons and armour, buys trinkets
     innkeeper    07:00-21:00  keeping the inn; sleeps there
     barkeeper    10:00-24:00  behind the bar, letting rooms; sleeps at the inn
+    guard        06:00-22:00  at the gate, fighting off what comes near (game/guards.py)
+    archer       07:00-19:00  on the walls, shooting what comes near
+    blacksmith   07:00-18:00  at the forge; sells iron goods, buys old iron
 
 They walk where they're going a tile at a time as the clock runs, a little under a minute a
 tile, wander about while they work, and step round each other and you. If you've been away a
@@ -90,6 +97,18 @@ JOBS = {
     "barkeeper": Job((220, 150, 200), 10, 24, "serving at the bar",
                      ("What'll it be?", "A bed upstairs? That's {price} coins the night.",
                       "Mind the cellar steps.", "Quiet tonight. Too quiet.")),
+    "guard": Job((200, 200, 215), 6, 22, "standing guard",
+                 ("Move along.", "Keep your blade sheathed inside the walls.",
+                  "Wolves came up to the gate last winter.", "All quiet. Just how I like it.")),
+    "archer": Job((150, 195, 120), 7, 19, "keeping watch",
+                  ("I can put an arrow through a wolf's eye at fifty paces.", "Nothing gets past the walls.",
+                   "Seen goblins on the hills at dusk.", "Keep clear of the butts while we're shooting.")),
+    "blacksmith": Job((235, 145, 85), 7, 18, "working the forge",
+                      ("Good iron, honest work.", "Need a blade? I've a few on the rack.",
+                       "Mind the sparks.", "Hot work, this. Hot work.")),
+    "carter": Job((205, 175, 120), 0, 24, "seeing to the cart",
+                  ("The road's long, but the cart's quicker than your feet.", "Hop on, if you've the coin.",
+                   "Mind the wheel.", "Weather's good for the road.")),
 }
 ROOM_PRICE = 8                # coins for a night upstairs at an inn
 EVENING = {"inn": "at {inn}", "green": "chatting on the green"}
@@ -149,7 +168,16 @@ def populate(level, site, rng: random.Random) -> None:
     water = [p for p in level.places if p.kind in ("pier", "shore")]
     camp = next((p for p in level.places if p.kind == "camp"), None)
     inn = buildings.get("inn")
-    if site.kind == "town":
+    smithy = next((b for b in level.buildings if b.kind == "smithy"), None)
+    barracks = [b for b in level.buildings if b.kind == "barracks"]
+    gates = [p for p in level.places if p.kind == "gate"]
+    walls = [p for p in level.places if p.kind == "walls"]
+    if site.kind == "fort":
+        jobs = ["guard"] * 4 + ["archer"] * 3 + ["blacksmith"] * bool(smithy)
+    elif site.kind == "city":
+        jobs = ["baker", "butcher", "innkeeper", "barkeeper", "shopkeeper"] + ["blacksmith"] * bool(smithy) \
+            + ["guard"] * min(4, 2 * len(gates)) + ["archer"] * min(2, len(walls))
+    elif site.kind == "town":
         jobs = ["baker", "butcher", "innkeeper", "barkeeper", "shopkeeper"] + ["farmer"] * min(2, len(fields_))
     elif site.kind == "village":
         jobs = ["farmer"] * min(3, max(1, len(fields_) - 1))
@@ -172,6 +200,8 @@ def populate(level, site, rng: random.Random) -> None:
             floor = [c for c in inn.floor(t) if t[c] not in (T.STAIRS_UP, T.STAIRS_DOWN)]
             home = [c for c in floor if any(t[c[0] + dx, c[1] + dy] == near
                                             for dx in (-1, 0, 1) for dy in (-1, 0, 1))] or floor
+        elif job in ("guard", "archer") and barracks:      # soldiers sleep in the barracks
+            home = [c for b in barracks for c in b.floor(t) if t[c] == T.BED] or barracks[0].floor(t)
         elif houses:
             house = houses.pop()
             house.name = f"the {name.split()[1]} house"
@@ -179,29 +209,33 @@ def populate(level, site, rng: random.Random) -> None:
             home = [c for c in house.floor(t) if t[c] == T.BED] or house.floor(t)
         else:
             home = green
-        work = workplace(level, job, i, fields_, water, camp, buildings)
+        work = workplace(level, job, i, fields_, water, camp, dict(buildings, smithy=smithy), gates, walls)
         if not work or not home:
             continue
         x, y = work[0]
         level.actors.append(Actor(job, name, x, y, home=home, work=work, evening=evening or green,
                                   evening_kind=evening_kind if evening else "green"))
-        if job == "lumberjack" and house is not None:
-            lean_axe(level, house)
+        if job == "lumberjack":
+            if house is not None:
+                lean_axe(level, house)
+            else:                         # no house of their own: the axe is left at the camp
+                spot = next((c for c in work if not T.ROOF[t[c]]), work[0])
+                items.drop(level, *spot, "axe")
     for place in (p for p in level.places if p.kind == "pasture"):
         for _ in range(rng.randint(3, 6) if place.animal != "horse" else 2):
             x, y = rng.choice(place.tiles)
             level.actors.append(Actor(place.animal, place.animal, x, y, work=place.tiles))
-    if site.kind in ("town", "village") and green:
+    if site.kind in ("city", "town", "village") and green:
         yard = settle_yard(level)
         for _ in range(rng.randint(3, 5)):
             x, y = rng.choice(yard)
             level.actors.append(Actor("hen", "hen", x, y, work=yard))
-        if site.kind == "town":
+        if site.kind in ("city", "town"):
             pet = rng.choice(PETS)
             x, y = rng.choice(yard)
             level.actors.append(Actor(pet, rng.choice(PET_NAMES[pet]), x, y, work=yard))
-    if site.kind in ("town", "village"):
-        rooms = [c for b in level.buildings if b.kind == "house" for c in b.floor(t) if t[c] == T.WOOD_FLOOR]
+    if site.kind in ("city", "town", "village"):
+        rooms = [c for b in level.buildings if b.kind == "house" for c in b.floor(t) if t[c] in (T.WOOD_FLOOR, T.STONE_FLOOR)]
         if rooms:
             items.drop(level, *rng.choice(rooms), "shovel")
 
@@ -231,8 +265,12 @@ def person_name(rng: random.Random, used: set) -> str:
     return name
 
 
-def workplace(level, job: str, i: int, fields_, water, camp, buildings) -> list:
+def workplace(level, job: str, i: int, fields_, water, camp, buildings, gates=(), walls=()) -> list:
     t = level.tiles
+    if job == "guard":
+        return gates[i % len(gates)].tiles if gates else []
+    if job == "archer":
+        return walls[i % len(walls)].tiles if walls else []
     if job == "farmer":
         return fields_[i % len(fields_)].tiles if fields_ else []
     if job == "fisherman":
@@ -240,14 +278,16 @@ def workplace(level, job: str, i: int, fields_, water, camp, buildings) -> list:
     if job == "lumberjack":
         return camp.tiles if camp else []
     kind = {"baker": "bakery", "butcher": "butcher", "innkeeper": "inn", "barkeeper": "inn",
-            "shopkeeper": "armoury"}[job]
+            "shopkeeper": "armoury", "blacksmith": "smithy"}.get(job)
+    if kind is None:
+        return []
     b = buildings.get(kind)
     if b is None:
         return []
     floor = b.floor(t)
     if job == "innkeeper":
         return [c for c in floor if t[c] not in (T.STAIRS_UP, T.STAIRS_DOWN)]
-    near_counter = [c for c in floor if any(t[c[0] + dx, c[1] + dy] in (T.COUNTER, T.OVEN, T.RACK)
+    near_counter = [c for c in floor if any(t[c[0] + dx, c[1] + dy] in (T.COUNTER, T.OVEN, T.RACK, T.FORGE, T.ANVIL)
                                             for dx in (-1, 0, 1) for dy in (-1, 0, 1))]
     return near_counter or floor
 

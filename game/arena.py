@@ -42,13 +42,13 @@ SEED = 4242                    # the arena is the same every time
 
 GALLERY = [   # (row name, tiles) - every tile appears here once
     ("ground", [T.DEEP_WATER, T.WATER, T.SAND, T.GRASS, T.TALL_GRASS, T.DRY_GRASS, T.DIRT, T.MUD, T.SNOW,
-                T.ICE, T.SCREE, T.REEDS, T.BUSH, T.BOULDER, T.ROCK, T.DUG]),
+                T.ICE, T.SCREE, T.REEDS, T.BUSH, T.BOULDER, T.ROCK, T.DUG, T.BASALT, T.ASH, T.LAVA]),
     ("trees", [T.TREE, T.PINE, T.JUNGLE_TREE, T.STUMP]),
     ("ways", [T.ROAD, T.STREET, T.PATH, T.BRIDGE, T.DOCK, T.FLAGSTONES, T.RUBBLE]),
     ("building", [T.WOOD_FLOOR, T.STONE_FLOOR, T.CAVE_FLOOR, T.WALL, T.STONE_WALL, T.CAVE_WALL, T.DOOR,
                   T.FENCE, T.BATTLEMENT, T.TORCH, T.SIGN, T.STAIRS_DOWN, T.STAIRS_UP]),
     ("furniture", [T.BED, T.TABLE, T.HEARTH, T.BARREL, T.WELL, T.STALL, T.OVEN, T.COUNTER, T.HOOKS,
-                   T.WOODPILE, T.TROUGH, T.BEDROLL, T.RACK, T.CHEST]),
+                   T.WOODPILE, T.TROUGH, T.BEDROLL, T.RACK, T.CHEST, T.FORGE, T.ANVIL, T.TARGET, T.CART]),
     ("fields", [T.CROPS, T.WHEAT, T.RYE, T.RICE, T.MILLET]),
 ]
 GALLERY_TOP = 100
@@ -61,7 +61,7 @@ WOODS = [T.TREE, T.PINE, T.JUNGLE_TREE]
 TRADE_PROPS = {"baker": T.OVEN, "butcher": T.HOOKS, "innkeeper": T.COUNTER, "farmer": T.WHEAT,
                "fisherman": T.WATER, "lumberjack": T.WOODPILE, "barkeeper": T.BARREL, "shopkeeper": T.RACK}
 ITEM_ROW = GALLERY_TOP + len(GALLERY) * ROW     # every item, lying ready to pick up, in rows
-ITEMS_PER_ROW = 16
+ITEMS_PER_ROW = 20
 WILDS = (8, 100, 64, 34)        # the fenced wood: x, y, width, height
 CAVE = (8, 142, 64, 40)         # the goblin cave
 HILL = (140, 48, 34, 34, 14)                    # centre, radii and top level of the hill
