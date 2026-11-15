@@ -36,6 +36,9 @@ def firelight(level) -> tuple[np.ndarray, np.ndarray]:
     for tile, reach in REACH.items():
         for x, y in zip(*np.nonzero(tiles == tile)):
             x, y = int(x), int(y)
+            if tile == T.CAMPFIRE:            # a campfire's light grows with the fuel on it
+                from .crafting import fire_reach
+                reach = fire_reach(level, x, y)
             seen = tcod.map.compute_fov(transparent, (x, y), int(reach) + 1, light_walls=True,
                                         algorithm=tcod.constants.FOV_SYMMETRIC_SHADOWCAST)
             if tile == T.TORCH:
@@ -72,3 +75,35 @@ def flame(phase: np.ndarray, seconds: float) -> tuple[np.ndarray, np.ndarray]:
     step = (np.floor(seconds * 8 + phase * 3)).astype(int)
     colours = np.array(FLAME_FG, dtype=np.float32)[step % len(FLAME_FG)]
     return step, colours
+
+
+# ----------------------------------------------------------------- the light you carry
+
+# A torch burns orange and wavers; a lantern burns yellow, behind glass, and hardly wavers.
+CARRIED = {"torch": ((95, 45, 0), (70, 30, 0), 1.0), "lantern": ((110, 80, 5), (80, 52, 0), 0.35)}
+CARRIED_MOST = 0.9          # how far towards its own colours (and the flame's) the light brings a tile
+
+
+def carried(kind: str | None, reach: int, dist: np.ndarray, dark, seconds: float) -> np.ndarray:
+    """0..1: how strongly a torch or lantern you hold lights each tile, `dist` columns away
+    (a row counting two). It fades out to `reach` tiles, shows most in the dark (`dark` 0..1),
+    and flickers: the whole pool breathes, and the edge wavers."""
+    if kind not in CARRIED:
+        return np.zeros(dist.shape, np.float32)
+    wobble = CARRIED[kind][2]
+    f = float(flicker(np.zeros(1), seconds)[0])            # 0.7..1 for a torch
+    f = 1 - (1 - f) * wobble
+    edge = 2 * reach + 1
+    edge = edge * (1 - 0.08 * wobble + 0.08 * wobble * (f - 0.7) / 0.3)
+    fall = np.clip(1 - dist / edge, 0, 1) ** 0.75
+    return (fall * f * CARRIED_MOST * dark).astype(np.float32)
+
+
+def carried_light(fg, bg, base_fg, base_bg, amount: np.ndarray, kind: str) -> tuple[np.ndarray, np.ndarray]:
+    """Brings each tile from the dark (blue at night) back towards its own colours, warmed by
+    the flame's, as strongly as `amount`."""
+    warm_fg, warm_bg, _ = CARRIED[kind]
+    a = amount[..., None]
+    lit_fg = base_fg * 0.95 + np.array(warm_fg, np.float32)
+    lit_bg = base_bg * 0.75 + np.array(warm_bg, np.float32)
+    return fg + (lit_fg - fg) * a, bg + (lit_bg - bg) * a

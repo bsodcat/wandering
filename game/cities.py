@@ -237,6 +237,12 @@ def build_city(level, site, rng: random.Random, land=None) -> None:
     plan = L.plan_of(site, (px, py))
     if "keep" in plan:
         L.build_keep(level, site, rng, (x0, y0, x1, y1), (px, py))
+        from . import halls
+        gate = next((p for p in level.places if p.kind == "keep gate"), None)
+        if gate is not None:                       # the guards' stable, by the keep gate
+            gx = sum(c[0] for c in gate.tiles) // len(gate.tiles)
+            gy = sum(c[1] for c in gate.tiles) // len(gate.tiles)
+            halls.stable(level, rng, (gx + 30 if gx < cx else gx - 30, gy))
     square(level, 9, 4, stalls=8)
     L.adorn_square(level, fountain="keep" not in plan)
     doors = []
@@ -258,12 +264,14 @@ def build_city(level, site, rng: random.Random, land=None) -> None:
         if d is not None:
             connect(level, d, ways(level), T.STREET)
     L.guardhouse(level, rng, (cx + 22, cy + 9))
-    spots = [(cx - 52, cy - 30), (cx + 52, cy + 30), (cx - 52, cy + 30), (cx + 52, cy - 30)]
+    spots = [(cx - 52, cy - 30), (cx + 52, cy + 30), (cx - 52, cy + 30), (cx + 52, cy - 30),
+             (cx - 30, cy + 22), (cx + 30, cy - 22)]
     for i, feature in enumerate(f for f in plan if f != "keep"):
         if feature == "market":
             L.market_row(level, rng)
         else:
-            getattr(L, feature)(level, rng, spots[i % len(spots)])
+            from . import halls
+            (getattr(L, feature, None) or getattr(halls, feature))(level, rng, spots[i % len(spots)])
     if "temple" not in plan:
         L.chapel(level, rng, (cx + 30, cy - 22))
     if (px, py) == L.garden_part(site):
@@ -536,3 +544,32 @@ def build_fort(level, site, rng: random.Random, land=None) -> None:
     along = [(x, y) for x in inner_x for y in inner_y
              if (x in (x0 + 1, x1 - 1) or y in (y0 + 1, y1 - 1)) and T.WALK[t[x, y]] and not T.ROOF[t[x, y]]]
     level.places.append(Place("walls", "the fort walls", along))
+    # the stable, in the yard well clear of the gate
+    from . import halls
+    keep_out = np.ones(t.shape, bool)
+    keep_out[x0 + 2: x1 - 1, y0 + 2: y1 - 1] = False
+    for c in post:
+        keep_out[max(0, c[0] - 2): c[0] + 3, max(0, c[1] - 2): c[1] + 3] = True
+    level._keep_off = keep_out
+    for spot in ((cx, cy + 6), (cx, cy - 6), (cx - 14, cy), (cx + 14, cy), (cx - 14, cy + 6), (cx + 14, cy + 6),
+                 (cx - 14, cy - 6), (cx + 14, cy - 6)):
+        if halls.stable(level, rng2, spot, "the fort's stable", halls.STABLE_SMALL):
+            break
+    else:                                   # no room in the yard: against the outside of the wall, off the gate
+        walled = np.zeros(t.shape, bool)
+        walled[x0 - 3: x1 + 4, y0 - 2: y1 + 3] = True
+        level._keep_off = walled
+        spots = ((cx + far[0] * (rx + 14), cy + far[1] * (ry + 6)), (x0 - 12, cy), (x1 + 12, cy))
+        for spot in spots:
+            if halls.stable(level, rng2, spot, "the fort's stable", halls.STABLE):
+                break
+        else:                               # rough ground all round: clear a patch for it first
+            sx, sy = cx + far[0] * (rx + 18), cy + far[1] * (ry + 12)
+            if not far[0] and not far[1]:
+                sx, sy = cx, cy - ry - 12
+            patch = (slice(max(0, sx - 10), sx + 11), slice(max(0, sy - 10), sy + 11))
+            rough = np.isin(t[patch], [T.TREE, T.PINE, T.JUNGLE_TREE, T.BOULDER, T.SCREE, T.BUSH, T.STUMP,
+                                       T.TALL_GRASS, T.ROCK]) & ~walled[patch]
+            t[patch] = np.where(rough, T.GRASS, t[patch])
+            halls.stable(level, rng2, (sx, sy), "the fort's stable", halls.STABLE)
+    level._keep_off = None

@@ -5,6 +5,7 @@ CONTROLS = [
     ("Getting about", [
         ("Arrows, numpad, WASD", "walk (numpad 7 9 1 3: diagonally)"),
         (". or numpad 5", "wait an hour"),
+        ("r", "wait as long as you like: set times, till dawn/noon/dusk, or your own"),
         ("z", "rest 8 hours, or sleep in a bed"),
         ("> or Enter", "step down into a region; take stairs down"),
         ("<", "take stairs up; back up to the world map"),
@@ -18,7 +19,7 @@ CONTROLS = [
         ("e", "the use menu: what you can do here and next to you"),
         ("Left mouse", "the use menu for what's under the pointer"),
         ("q", "equipment: what you wear and wield"),
-        ("k", "crafting: campfires, torches, rope grapples"),
+        ("k", "crafting: campfires, torches, rope grapples, lye and soap"),
         ("i", "your inventory"),
         ("g", "pick up what's at your feet"),
         ("x", "dig, with a shovel"),

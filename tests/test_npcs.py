@@ -162,10 +162,10 @@ class MeetingTests(unittest.TestCase):
         self.skipTest("no room beside them")
 
     def test_walking_into_someone_talks_and_steps_past(self):
-        e, a, (dx, dy) = self.engine_beside("baker")
+        e, a, (dx, dy) = self.engine_beside("townsperson")      # (the baker and butcher trade now)
         old, there = (e.lx, e.ly), (a.x, a.y)
         e.move_local(dx, dy)
-        talked = [m for m in e.messages if "the baker" in m]
+        talked = [m for m in e.messages if "the townsperson" in m]
         self.assertTrue(talked and "Hello" in talked[-1])
         self.assertEqual((e.lx, e.ly), there)
         self.assertTrue(a.met)

@@ -113,6 +113,13 @@ TILES = [
     Tile(81, "ore vein", "£", (200, 170, 120), (55, 50, 46), walk=False, see=False, natural=False),
     Tile(82, "chasm", "░", (40, 38, 44), (4, 4, 6), walk=False, natural=False),
     Tile(83, "fissure", "░", (70, 58, 46), (8, 6, 5), walk=False, natural=False),
+    # a stone city's other great buildings (game/halls.py)
+    Tile(84, "bathing pool", "≈", (150, 215, 225), (40, 95, 110), walk=False, roof=True, natural=False),
+    Tile(85, "gravestone", "┼", (190, 190, 185), (55, 75, 45), walk=False, natural=False),
+    Tile(86, "notice board", "≡", (235, 220, 170), (90, 65, 40), walk=False, natural=False),
+    Tile(87, "vat", "○", (185, 150, 95), (70, 50, 32), walk=False, roof=True, natural=False),
+    Tile(88, "arcane circle", "Ω", (190, 140, 255), (45, 25, 70), minutes=0.4, roof=True, natural=False),
+    Tile(89, "training dummy", "¥", (200, 170, 110), (75, 73, 70), walk=False, natural=False),
 ]
 assert all(t.id == i for i, t in enumerate(TILES))
 ID = {t.name: t.id for t in TILES}
@@ -123,7 +130,8 @@ ID = {t.name: t.id for t in TILES}
  STAIRS_UP, BATTLEMENT, BARREL, DRY_GRASS, REEDS, FLAGSTONES, TORCH, WHEAT, RYE, RICE, MILLET, OVEN,
  COUNTER, HOOKS, SIGN, WOODPILE, STUMP, TROUGH, DUG, BEDROLL, RACK, CHEST, BASALT, ASH, LAVA,
  FORGE, ANVIL, TARGET, CART, THRONE, BOOKSHELF, BARS, GALLOWS, STOCKS, STAGE, BENCH, ALTAR, FOUNTAIN,
- STATUE, CARPET, JUNK, FLOWERS, CAMPFIRE, ASHES, ORE_VEIN, CHASM, FISSURE) = range(len(TILES))
+ STATUE, CARPET, JUNK, FLOWERS, CAMPFIRE, ASHES, ORE_VEIN, CHASM, FISSURE, POOL, GRAVE, NOTICE, VAT, CIRCLE,
+ DUMMY) = range(len(TILES))
 DROPS = (CHASM, FISSURE)                      # you can fall into these (game/ravines.py)
 CONTAINERS = (BARREL, CHEST)                  # things you open: game/shop.py's Container
 GRAINS = [WHEAT, RYE, RICE, MILLET]

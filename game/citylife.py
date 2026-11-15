@@ -40,13 +40,17 @@ import random
 import numpy as np
 
 from . import tiles as T
-from .people import CRAFTS, FIRST, MOST_STEPS, SPOUSE, Actor, find_path, marry, on_duty, person_name, settle_green
+from . import routines as R
+from .people import CRAFTS, FIRST, JOBS, MOST_STEPS, SPOUSE, Actor, find_path, marry, on_duty, person_name, settle_green
 
 RESIDENTS = 54                # houses with craftsfolk living and working in them, at most
+HOUSEHOLDS = 260              # houses the city's other households live in, at most (the rest stand empty)
+HOUSEHOLD_SPOUSE = 0.25       # how often one of them is married, a homemaker at home
+STREET_FOLK = {"street sweeper": 2, "lamplighter": 2, "water carrier": 2, "chimney sweep": 1, "town crier": 1}
 TOWNSFOLK = (25, 37)          # townsfolk with no trade
 THIEVES = (1, 4)
 GUARDS_PER_THIEF = 2
-WANDER = 4                    # the streets count this many times over among an idler's haunts
+WANDER = 11                   # the streets count this many times over among an idler's haunts
 LABOURERS = 24                # labourers and washerwomen living in a lower quarter's hovels, at most
 CHILDREN = 0.3                # how often a family has children
 MOST_CHILDREN = 24            # children in a part of a city, at most
@@ -137,7 +141,16 @@ def populate(level, site, rng: random.Random, used: set, evening: list, evening_
     # where the idle go: mostly the streets, all over town; the square only for its stalls
     from .landmarks import square_stalls
     stalls = [c for s in square_stalls(level) for c in s] or square
+    spots = R.Spots(level, square, walk, inn if evening_kind == "inn" else [], square_stalls(level))
     haunts = [("browsing the market", stalls, "day"), ("at {inn}", inn, "evening")]
+    haunts += [(f"browsing {name}", tiles, "day") for name, tiles in spots.stalls[:4]]
+    haunts += [("drawing water at the fountain", spots.water, "day"), ("gossiping by the fountain", spots.water, "any")]
+    for doing, tiles, when in (("taking the waters at the bathhouse", spots.bath, "any"),
+                               ("visiting a grave", spots.graves, "day"),
+                               ("reading the notice board", spots.notice, "day"),
+                               ("watching the recruits drill", spots.yard, "day")):
+        if tiles:
+            haunts.append((doing, tiles, when))
     haunts += [("wandering the streets", walk, "any")] * WANDER
     garden = next((p.tiles for p in level.places if p.kind == "garden"), None)
     if garden:
@@ -165,17 +178,20 @@ def populate(level, site, rng: random.Random, used: set, evening: list, evening_
         inside = house.floor(t)
         beds = [c for c in inside if t[c] == T.BED] or inside
         start = rng.randint(6, 9)
-        worker = add(craft, name, beds, inside, shift=(start, start + rng.randint(8, 10)))
-        if worker is None or rng.random() >= SPOUSE:
+        shift = (start, min(19, start + rng.randint(8, 10)))
+        married = rng.random() < SPOUSE
+        worker = add(craft, name, beds, inside, shift=shift,
+                     routine=R.craftsperson(spots, rng, JOBS[craft].doing, house, inside, married, shift))
+        if worker is None or not married:
             continue
-        marry(level, rng, used, worker, house)
+        marry(level, rng, used, worker, house, spots)
         for _ in range(rng.randint(1, 2) if rng.random() < CHILDREN * 2 else 0):
             if len(kids) < MOST_CHILDREN:
                 kid = f"{rng.choice(FIRST)} {name.split()[-1]}"
                 used.add(kid)
-                kids.append(add("child", kid, beds, walk, evening=inside, evening_kind="home"))
+                kids.append(add("child", kid, beds, walk, evening=inside, evening_kind="home",
+                                routine=R.child(spots, rng, inside, house)))
     del houses[:RESIDENTS]
-    playmates([k for k in kids if k is not None], rng)
     # the lower quarter: labourers, washerwomen, a ratcatcher
     if hovels:
         wash = near(level, walk + square, T.FOUNTAIN, 3) + near(level, walk, T.WELL, 3)
@@ -183,8 +199,12 @@ def populate(level, site, rng: random.Random, used: set, evening: list, evening_
         shore = [c for c in near(level, walk, T.BRIDGE, 2)] or wash or square
         for _ in range(min(len(hovels) // 2, LABOURERS)):
             job = rng.choice(("labourer", "labourer", "washerwoman"))
-            add(job, person_name(rng, used), hovel(), walk if job == "labourer" else (shore if water else wash or square),
-                shift=(rng.randint(5, 7), rng.randint(15, 18)))
+            work = walk if job == "labourer" else (shore if water else wash or square)
+            shift = (rng.randint(5, 7), rng.randint(15, 18))
+            home = hovel()
+            add(job, person_name(rng, used), home, work, shift=shift,
+                routine=R.labourer(spots, rng, work, shift) if job == "labourer"
+                else R.washerwoman(spots, rng, work, home, shift))
         add("ratcatcher", person_name(rng, used), hovel(), walk)
     # townsfolk with no trade, and beggars
     for _ in range(rng.randint(*TOWNSFOLK)):
@@ -218,32 +238,129 @@ def populate(level, site, rng: random.Random, used: set, evening: list, evening_
         add("guard", person_name(rng, used), bed, post, shift=(21, 30) if night else None)
     # merchants at the stalls
     from .landmarks import square_stalls
-    for stall in square_stalls(level)[:3]:
-        add("merchant", person_name(rng, used), lodging(), stall)
+    for stall in square_stalls(level)[:5]:
+        add("merchant", person_name(rng, used), lodging(), stall, routine=R.merchant(spots, rng, stall))
     for p in places.get("market", []):
         for i in range(min(4, max(1, len(p.tiles) // 6))):
-            add("merchant", person_name(rng, used), lodging(), p.tiles[i::4])
+            add("merchant", person_name(rng, used), lodging(), p.tiles[i::4],
+                routine=R.merchant(spots, rng, p.tiles[i::4]))
     # whoever keeps the landmarks
     if temple:
         inside = temple.floor(t)
-        add("priest", person_name(rng, used), inside, near(level, inside, T.ALTAR, 2) or inside)
+        altar = near(level, inside, T.ALTAR, 2) or inside
+        add("priest", person_name(rng, used), inside, altar, routine=R.priest(spots, altar, steps))
     if stage:
         boards = [c for c in stage if t[c] == T.STAGE]
-        add("bard", person_name(rng, used), lodging(), boards)
+        add("bard", person_name(rng, used), lodging(), boards, routine=R.performer(spots, rng, boards, "bard"))
         for _ in range(2):
-            add("mummer", person_name(rng, used), lodging(), boards)
+            add("mummer", person_name(rng, used), lodging(), boards, routine=R.performer(spots, rng, boards, "mummer"))
     for p in places.get("pit", []):
         for _ in range(2):
-            add("pit fighter", person_name(rng, used), lodging(), p.tiles)
+            add("pit fighter", person_name(rng, used), lodging(), p.tiles, routine=R.pit_fighter(spots, p.tiles))
     for p in places.get("gallows", []):
-        add("hangman", person_name(rng, used), lodging(), p.tiles)
+        add("hangman", person_name(rng, used), lodging(), p.tiles, routine=R.hangman(spots, p.tiles))
     hall = building(level, "guildhall")
     if hall:
-        add("guildmaster", person_name(rng, used), lodging(), hall.floor(t))
+        add("guildmaster", person_name(rng, used), lodging(), hall.floor(t), routine=R.guildmaster(spots, hall.floor(t)))
     lab = floor(level, "alchemist")
     if lab:
-        add("alchemist", person_name(rng, used), lab, near(level, lab, T.COUNTER) or lab)
+        bench = near(level, lab, T.COUNTER) or lab
+        add("alchemist", person_name(rng, used), lab, bench, routine=R.alchemist(spots, lab, bench))
     court(level, site, rng, used, add)
+    halls_people(level, spots, rng, used, add, lodging, kids)
+    for kind, n in STREET_FOLK.items():
+        for _ in range(n):
+            home = lodging()
+            add(kind, person_name(rng, used), home, walk, routine=R.street_folk(kind, spots, rng, home))
+    households(level, spots, rng, used, add, houses, kids)
+    playmates([k for k in kids if k is not None], rng)
+
+
+def halls_people(level, spots, rng: random.Random, used: set, add, lodging, kids: list) -> None:
+    """Whoever keeps the halls of game/halls.py, and whoever's in them."""
+    t = level.tiles
+
+    def beds(room):
+        return [c for c in room if t[c] == T.BED] or room
+    room = floor(level, "bathhouse")
+    if room:
+        for _ in range(2):
+            add("bathkeeper", person_name(rng, used), lodging(), room, routine=R.bathkeeper(spots, room))
+    room = floor(level, "counting house")
+    if room:
+        desk = near(level, room, T.COUNTER) or room
+        add("moneylender", person_name(rng, used), lodging(), desk, routine=R.moneylender(spots, desk))
+    ground = next((p.tiles for p in level.places if p.kind == "graveyard"), [])
+    if ground:
+        add("gravedigger", person_name(rng, used), lodging(), ground, routine=R.gravedigger(spots, ground))
+    room = floor(level, "orphanage")
+    if room:
+        cots = beds(room)
+        home = building(level, "orphanage")
+        add("matron", person_name(rng, used), cots[:1], room, routine=R.matron(spots, room))
+        for cot in cots[1:7]:
+            kid = f"{rng.choice(FIRST)} Foundling"
+            used.add(kid)
+            kids.append(add("child", kid, [cot], spots.streets, evening=room, evening_kind="home",
+                            routine=R.child(spots, rng, room, home)))
+    room = floor(level, "healer")
+    if room:
+        cots = beds(room)
+        add("healer", person_name(rng, used), room, room, routine=R.healer(spots, room, cots))
+        for cot in cots[:rng.randint(1, max(1, len(cots) - 1))]:
+            add("patient", person_name(rng, used), [cot], [cot], evening=[cot])
+    room = floor(level, "adventurers' hall")
+    if room:
+        for _ in range(rng.randint(4, 7)):
+            add("sellsword", person_name(rng, used), lodging(), room, routine=R.sellsword(spots, rng, room))
+    room = floor(level, "brewhouse")
+    if room:
+        for _ in range(2):
+            add("brewer", person_name(rng, used), lodging(), room, routine=R.brewer(spots, room))
+    room = floor(level, "tannery")
+    if room:
+        add("tanner", person_name(rng, used), lodging(), room, routine=R.tanner(spots, room))
+    room = floor(level, "mage tower")
+    if room:
+        circle = [c for c in room if t[c] == T.CIRCLE]
+        books = near(level, room, T.BOOKSHELF)
+        add("mage", person_name(rng, used), beds(room)[:1], room, routine=R.mage(spots, circle, books, room))
+        for _ in range(2):
+            add("apprentice", person_name(rng, used), lodging(), room,
+                routine=R.apprentice(spots, rng, circle, books, room))
+    room = floor(level, "school")
+    if room:
+        desk = near(level, room, T.TABLE) or room
+        add("schoolmaster", person_name(rng, used), lodging(), desk, routine=R.schoolmaster(spots, desk, room))
+    if spots.yard:
+        add("master-at-arms", person_name(rng, used), lodging(), spots.yard,
+            routine=R.master_at_arms(spots, spots.yard))
+        for _ in range(rng.randint(3, 5)):
+            add("recruit", person_name(rng, used), lodging(), spots.yard, routine=R.recruit(spots, rng, spots.yard))
+
+
+def households(level, spots, rng: random.Random, used: set, add, houses: list, kids: list) -> None:
+    """The city's other houses, lived in: a clerk, a porter, a maid, an elder ..., each with a
+    day of their own (game/routines.py); some married, a few with children."""
+    t = level.tiles
+    for house in houses[:HOUSEHOLDS]:
+        if house.owner:
+            continue
+        kind = rng.choice(R.HOUSEHOLDS)
+        name = person_name(rng, used)
+        house.name, house.owner = f"the {name.split()[1]} house", kind
+        inside = house.floor(t)
+        beds = [c for c in inside if t[c] == T.BED] or inside
+        married = kind not in ("widow", "elder") and rng.random() < HOUSEHOLD_SPOUSE
+        a = add(kind, name, beds, inside, routine=R.household(kind, spots, rng, house, inside, married))
+        if a is None or not married:
+            continue
+        marry(level, rng, used, a, house, spots)
+        if rng.random() < CHILDREN and len(kids) < MOST_CHILDREN:
+            kid = f"{rng.choice(FIRST)} {name.split()[-1]}"
+            used.add(kid)
+            kids.append(add("child", kid, beds, spots.streets, evening=inside, evening_kind="home",
+                            routine=R.child(spots, rng, inside, house)))
 
 
 def playmates(kids: list, rng: random.Random) -> None:
@@ -363,7 +480,7 @@ def play(level, engine, rng: random.Random, elapsed: float) -> None:
                         goal.budget = -COUNT_TO               # no tag-backs: they count to three first
                         if seen(engine, level, (b.x, b.y)) and rng.random() < 0.3:
                             engine.say(f'"Tag! You\'re it!" shrieks {b.name.split()[0]}, and {goal.name.split()[0]} '
-                                       f'chases after the others.')
+                                       f'chases after the others.', ambient=True)
                         it = goal
                         break
                 elif gap(b, it) <= SCARED:

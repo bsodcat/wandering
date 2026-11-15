@@ -53,6 +53,7 @@ GALLERY = [   # (row name, tiles) - every tile appears here once
     ("city", [T.THRONE, T.BOOKSHELF, T.BARS, T.GALLOWS, T.STOCKS, T.STAGE, T.BENCH, T.ALTAR, T.FOUNTAIN,
               T.STATUE, T.CARPET, T.JUNK, T.FLOWERS]),
     ("wild", [T.CAMPFIRE, T.ASHES, T.ORE_VEIN, T.CHASM, T.FISSURE]),
+    ("halls", [T.POOL, T.GRAVE, T.NOTICE, T.VAT, T.CIRCLE, T.DUMMY]),
 ]
 GALLERY_TOP = 100
 SLOT = 4                       # columns between the tiles in a gallery row
@@ -334,6 +335,13 @@ def settlement(level: Level, world, rng: random.Random, site: Site, at: tuple[in
             if id(cells) not in moved:
                 moved[id(cells)] = shift(cells)
             setattr(a, name, moved[id(cells)])
+        def moved_cells(cells):
+            if id(cells) not in moved:
+                moved[id(cells)] = shift(cells)
+            return moved[id(cells)]
+        # their haunts and their routines' places, too (else they'd walk off to the town's old spot)
+        a.haunts = [(doing, moved_cells(cells), when) for doing, cells, when in a.haunts]
+        a.routine = [(s, e, doing, moved_cells(cells), *days) for s, e, doing, cells, *days in a.routine]
         level.actors.append(a)
     if sub.crop is not None and level.crop is None:
         level.crop = sub.crop

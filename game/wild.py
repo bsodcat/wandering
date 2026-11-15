@@ -908,11 +908,16 @@ class Wilds:
 
 # ----------------------------------------------------------------- you and them
 
-def player_attack(level, engine, c, rng: random.Random) -> None:
-    """You strike `c`."""
+MOUNTED_BLOW = 2                  # damage more a blow struck from the saddle does
+
+
+def player_attack(level, engine, c, rng: random.Random, mounted: bool = False) -> None:
+    """You strike `c` (from horseback, harder: MOUNTED_BLOW)."""
     w = Wilds(level, engine, rng, engine.minutes)
     b = c.beast
     dmg, verb = combat.player_blow(engine.player, b.dodge, rng)
+    if dmg and mounted:
+        dmg += MOUNTED_BLOW
     if c.asleep:
         c.asleep = False
     c.provoked = engine.minutes

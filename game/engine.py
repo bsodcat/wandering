@@ -67,6 +67,9 @@ from . import locks
 from . import mining
 from . import ravines
 from . import guards
+from . import halls
+from . import mingling
+from . import waiting
 from . import items
 from . import people
 from . import shop as shops
@@ -102,6 +105,7 @@ OVERLAYS = ["Normal", "Elevation", "Temperature", "Moisture", "Weather"]
 PICKUP_KEY, DIG_KEY, BAG_KEY, USE_KEY = KeySym.G, KeySym.X, KeySym.I, KeySym.E
 GEAR_KEY = KeySym.Q       # the equipment menu
 CRAFT_KEY = KeySym.K      # the crafting menu (game/crafting.py)
+WAIT_MENU_KEY = KeySym.R  # the wait menu: as long as you like (game/waiting.py)
 FIRE_WARMTH = 15.0        # degrees C a campfire beside you adds
 STICKS = (1, 3)           # sticks that fall round a felled tree
 ATTACK_MINUTES, ATTACK_EFFORT = 0.5, 1.5  # a blow
@@ -269,13 +273,17 @@ class Engine:
 
     # ------------------------------------------------------------- queries
 
-    def say(self, text: str) -> None:
+    def say(self, text: str, ambient: bool = False) -> None:
+        """Puts a line in the log. `ambient`: something going on around you (chatter, children at
+        play), not the outcome of anything you did."""
         if not isinstance(text, str) or not text:      # only words go in the log
             return
         if self.messages and self.messages[-1] == text:
             self.repeats += 1         # shown as "(x3)" rather than filling the log
             return
         self.repeats = 1
+        if not ambient:
+            self.said_at = self.minutes    # (overheard chatter keeps quiet a minute after: game/mingling.py)
         self.messages.append(text)
         del self.messages[:-200]
 
@@ -443,6 +451,10 @@ class Engine:
         if not w.walkable(x, y):
             self.say(f"The {B.BIOMES[w.biome[x, y]].name.lower()} is too deep to cross.")
             return False
+        if dx and dy and not w.walkable(p.x + dx, p.y) and not w.walkable(p.x, p.y + dy):
+            sides = {B.BIOMES[w.biome[p.x + dx, p.y]].name.lower(), B.BIOMES[w.biome[p.x, p.y + dy]].name.lower()}
+            self.say(f"There's no way through between the {' and the '.join(sorted(sides))}.")
+            return False
         hours, soak = self.travel_time(x, y, dx, dy)
         old_biome = self.biome
         p.x, p.y = x, y
@@ -567,7 +579,7 @@ class Engine:
         if cart is not None:                  # a cart: ask the carter for a ride
             return self.board(cart.driver)
         tile = int(level.tiles[nx, ny])
-        if tile in trees.KIND and self.player.inventory.count("axe"):
+        if tile in trees.KIND and self.player.inventory.count("axe") and self.mount is None:
             return self.chop(nx, ny)
         if self.mount is not None:                   # on horseback: not indoors, not up rock, not over the edge
             if tile in T.DROPS:
@@ -585,7 +597,7 @@ class Engine:
             self.edge = (level.key, nx, ny)
             self.say(f"You stop at the edge of a deep {T.TILES[tile].name}. Step again to climb down into it.")
             return False
-        if tile in mining.BREAKABLE and p.inventory.count(mining.PICK) and not p.noclip \
+        if tile in mining.BREAKABLE and p.inventory.count(mining.PICK) and not p.noclip and self.mount is None \
                 and not (gear.can_climb(p) and tile in elevation.CLIMBABLE) and mining.can_break(level, nx, ny):
             self.say(mining.break_rock(self, nx, ny))
             return False
@@ -604,6 +616,8 @@ class Engine:
                 return False
         roped = gear.can_climb(p)
         rock = tile in elevation.CLIMBABLE
+        if not T.WALK[tile] and halls.bump(self, tile, nx, ny):
+            return False
         if not T.WALK[tile] and not (rock and roped):
             if rock:
                 self.say(f"The {T.TILES[tile].name} is in the way. With climbing gear on you could climb it.")
@@ -611,15 +625,21 @@ class Engine:
                 self.say("The water is too deep to wade." if tile == T.DEEP_WATER
                          else f"The {T.TILES[tile].name} is in the way.")
             return False
+        if dx and dy and elevation.squeeze(level.tiles, self.lx, self.ly, dx, dy):
+            self.say("There's no way between the rocks there.")
+            return False
         dh = int(level.elev[nx, ny]) - int(level.elev[self.lx, self.ly])
         graded = tile in elevation.GRADED and int(level.tiles[self.lx, self.ly]) in elevation.GRADED
-        ok, slow, extra, note = elevation.climb(dh, graded, roped)
+        if self.mount is not None:                   # a horse takes a steep bank in its stride
+            ok, slow, extra, note = horses.climb(dh, graded)
+        else:
+            ok, slow, extra, note = elevation.climb(dh, graded, roped)
         if not ok:
             self.say(note)
             return False
         from_rock = self.on_rock is not None
-        climbing = (rock and not from_rock) or dh > elevation.MOST_STEP     # hand over hand, up
-        if (rock or abs(dh) > elevation.MOST_STEP) and p.stamina < gear.CLIMB_STAMINA:
+        climbing = ((rock and not from_rock) or dh > elevation.MOST_STEP) and self.mount is None   # hand over hand, up
+        if (rock or abs(dh) > elevation.MOST_STEP) and p.stamina < gear.CLIMB_STAMINA and self.mount is None:
             self.say("You're too worn out to climb.")
             return False
         if rock:
@@ -729,8 +749,8 @@ class Engine:
     # ------------------------------------------------------------- things to do
 
     def attack(self, c) -> bool:
-        """Strikes a creature with whatever you're holding."""
-        wild.player_attack(self.level, self, c, self.rng)
+        """Strikes a creature with whatever you're holding (harder from the saddle)."""
+        wild.player_attack(self.level, self, c, self.rng, mounted=self.mount is not None)
         self.autopath = False
         self.pass_time(ATTACK_MINUTES / 60, effort=ATTACK_EFFORT * self.burdened)
         return False
@@ -779,6 +799,17 @@ class Engine:
             p.inventory.add("wolf pelt")
             return f"You skin the wolf with your {knife}, roll up the pelt and cut away {items.amount('animal fat', fat)}."
         return f"You butcher the {beast} with your {knife} and cut away {items.amount('animal fat', fat)}."
+
+    def drink(self, warm: float, stamina: float, health: float, words: str) -> str:
+        """Something drunk (or eaten) at the inn's table, there and then."""
+        p = self.player
+        if warm:
+            p.body = max(p.body, min(NORMAL, p.body + warm))
+        p.stamina = min(100.0, p.stamina + stamina)
+        if health:
+            self.heal(health)
+        self.pass_time(MEAL_MINUTES / 60)
+        return words
 
     def eat_soup(self) -> str:
         """A bowl of the innkeeper's hot soup: warming, and the cure for wolf fever."""
@@ -880,7 +911,7 @@ class Engine:
                     out.append(shops.Option(f"Saddle {name}", lambda e, a=a: go(a.x, a.y, lambda e: horses.saddle(e, a), who=a),
                                             ok=bool(p.inventory.count(horses.SADDLE))))
             elif not a.animal:
-                if self.at_work(a) and a.kind in ("lumberjack", "barkeeper", "innkeeper", "shopkeeper",
+                if self.at_work(a) and a.kind in ("lumberjack", "barkeeper", "innkeeper", "shopkeeper", "baker", "butcher",
                                                   "blacksmith", "carter", "tailor", "weaver", "merchant",
                                                   "alchemist", "stablehand"):
                     out.append(shops.Option(f"Trade with {first}",
@@ -897,7 +928,7 @@ class Engine:
             else:
                 out.append(shops.Option(f"Open the {T.TILES[tile].name}",
                                         lambda e: go(x, y, lambda e: e.open_barrel(x, y))))
-        if mining.can_break(level, x, y) and p.inventory.count(mining.PICK):
+        if mining.can_break(level, x, y) and p.inventory.count(mining.PICK) and self.mount is None:
             out.append(shops.Option(f"Break the {T.TILES[tile].name} (pickaxe)",
                                     lambda e: go(x, y, lambda e: mining.break_rock(e, x, y))))
         if tile in T.DROPS:
@@ -917,7 +948,9 @@ class Engine:
         if (x, y) in level.exits:
             way = "down" if tile == T.STAIRS_DOWN else "up"
             out.append(shops.Option(f"Take the stairs {way}", lambda e: go(x, y, lambda e: e.use_stairs(), on=True)))
-        if tile in trees.KIND and p.inventory.count("axe") and beast is None:
+        if tile in (T.CAMPFIRE, T.ASHES):
+            out += crafting.fire_options(self, x, y)
+        if tile in trees.KIND and p.inventory.count("axe") and beast is None and self.mount is None:
             out.append(shops.Option("Fell the tree", lambda e: go(x, y, lambda e: e.chop(x, y))))
         if here:
             out += self.own_options()
@@ -993,6 +1026,7 @@ class Engine:
                     out.append(shops.Option(f"Wear the {kind}", lambda e, k=kind: gear.wear(e.player, k)))
         out.append(shops.Option("Equipment... (q)", lambda e: e.equipment_menu()))
         out.append(shops.Option("Craft... (k)", lambda e: setattr(e, "shop", crafting.menu(e))))
+        out.append(shops.Option("Wait... (r)", lambda e: setattr(e, "shop", waiting.menu(e))))
         if tile not in (T.BED, T.BEDROLL):
             out.append(shops.Option(f"Rest {REST_HOURS} hours", lambda e: e.rest()))
         return out
@@ -1068,6 +1102,9 @@ class Engine:
 
     def chop(self, x: int, y: int) -> bool:
         """Fells the tree at (x, y) with your axe."""
+        if self.mount is not None:
+            self.say("You can't swing an axe from the saddle. Get down first.")
+            return False
         level = self.level
         logs = trees.fell(level, x, y)
         level._walk_costs = None
@@ -1465,10 +1502,18 @@ class Engine:
             for dx in (-1, 0, 1):
                 for dy in (-1, 0, 1):
                     if dx or dy:
+                        ok = elevation.passable(self.level.elev, self.level.tiles, dx, dy,
+                                                elevation.MOST_STEP if self.mount is None else horses.HORSE_STEP)
+                        if dx and dy:
+                            ok = ok & ~elevation.squeezes(self.level.tiles, dx, dy)
+                        graph.add_edge((dx, dy), 3 if dx and dy else 2, cost=cost, condition=ok)
+        else:                               # nor between two corners of land you can't cross
+            graph = tcod.path.CustomGraph(cost.shape)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if dx or dy:
                         graph.add_edge((dx, dy), 3 if dx and dy else 2, cost=cost,
-                                       condition=elevation.passable(self.level.elev, self.level.tiles, dx, dy))
-        else:
-            graph = tcod.path.SimpleGraph(cost=cost, cardinal=2, diagonal=3)
+                                       condition=elevation.corners_open(cost > 0, dx, dy) if dx and dy else None)
         finder = tcod.path.Pathfinder(graph)
         finder.add_root(start)
         path = finder.path_to((x, y)).tolist()
@@ -1578,6 +1623,7 @@ class Engine:
             people.advance(self.level, self.minutes, self)
             citylife.crime(self.level, self, self.rng, hours * MINUTES_PER_HOUR)
             citylife.play(self.level, self, self.rng, hours * MINUTES_PER_HOUR)
+            mingling.mingle(self.level, self, self.rng, hours * MINUTES_PER_HOUR)
             wild.advance(self.level, self.minutes, self, self.rng)
             guards.defend(self.level, self, self.rng, hours * MINUTES_PER_HOUR)
         if p.god:
@@ -1763,6 +1809,9 @@ class Engine:
             self.autopath = False
         elif sym == DIG_KEY and self.player.alive:
             self.dig()
+        elif sym == WAIT_MENU_KEY and self.player.alive:
+            self.shop = waiting.menu(self)
+            self.autopath = False
         elif sym == LAYER_KEY and self.level is not None:
             self.treetops = not self.treetops
             self.say("You look up at the treetops." if self.treetops else "You look at the ground beneath the trees.")

@@ -313,6 +313,10 @@ class Shop(Tabs, Modal):
         paid = " and ".join(items.amount(k, v * n) for k, v in deal.pay.items())
         if deal.after == "soup":
             return f"You pay {paid} for a bowl of hot soup. " + engine.eat_soup()
+        if deal.after.startswith("drink:"):
+            what = deal.after[len("drink:"):]
+            _, warm, stamina, health, words = DRINKS[what]
+            return f"You pay {paid} for {what}. " + engine.drink(warm, stamina, health, words)
         if deal.after == "horse":
             from . import horses
             return f"You pay {paid}. " + horses.buy(engine)
@@ -559,6 +563,35 @@ def tailor_deals(engine) -> list:
     return deals + sell_deals(engine, {"wolf pelt": PELT_PRICE})
 
 
+BAKER_WARES = {"loaf of bread": 2, "bread roll": 1, "meat pie": 4, "honey cake": 3}
+BAKER_BUYS = {"apple": 1}                  # for the pies and cakes
+BUTCHER_WARES = {"roast meat": 4, "sausage": 3, "salt pork": 4, "animal fat": 2}
+BUTCHER_BUYS = {"rabbit carcass": 2, "squirrel carcass": 1, "bird carcass": 1, "wolf carcass": 2, "animal fat": 1}
+INN_FOOD = {"bread and cheese": 3, "roast meat": 5, "meat pie": 5}
+# drunk (or eaten) there and then: (price, warmth in degrees, stamina, health, what it's like)
+DRINKS = {
+    "a mug of ale": (2, 0.3, 10, 0, "Frothy and brown. You wipe your mouth on your sleeve."),
+    "a cup of mulled wine": (4, 1.5, 8, 2, "Hot and spiced: it warms you to your toes."),
+    "a mug of hot cider": (3, 1.2, 10, 0, "Sweet and steaming."),
+    "a cup of milk": (1, 0.0, 6, 1, "Cool and fresh from the morning's milking."),
+    "a bowl of stew": (6, 1.0, 25, 10, "Thick with barley and mutton. You feel much better."),
+}
+
+
+def baker_deals(engine) -> list:
+    return buy_deals(BAKER_WARES) + sell_deals(engine, BAKER_BUYS)
+
+
+def butcher_deals(engine) -> list:
+    """Meat for the road and fat for your lamp; and they'll buy what you've hunted."""
+    return buy_deals(BUTCHER_WARES) + sell_deals(engine, BUTCHER_BUYS)
+
+
+def drink_deals(names) -> list:
+    return [Deal(f"{what[0].upper()}{what[1:]}: {DRINKS[what][0]} coin{'s' if DRINKS[what][0] > 1 else ''}",
+                 {"coin": DRINKS[what][0]}, {}, after=f"drink:{what}") for what in names]
+
+
 def alchemist_deals(engine) -> list:
     return buy_deals(ALCHEMY) + sell_deals(engine, STRANGE)
 
@@ -572,10 +605,19 @@ def for_actor(a, engine) -> Modal | None:
         inn = next((b.name for b in engine.level.buildings if b.kind == "inn"), "the inn")
         shop = Shop(f"{a.name}, the barkeeper", f"Welcome to {inn}. A bed upstairs is {ROOM_PRICE} coins the night.",
                     [Deal(f"A room for the night: {ROOM_PRICE} coins", {"coin": ROOM_PRICE}, {"room key": 1},
-                          after="room")])
+                          after="room")]
+                    + drink_deals(["a mug of ale", "a cup of mulled wine", "a mug of hot cider", "a cup of milk"]))
     elif a.kind == "innkeeper":
         shop = Shop(f"{a.name}, the innkeeper", "Sit by the fire. The soup's hot, and it'll put you right.",
-                    [Deal(f"A bowl of hot soup: {SOUP_PRICE} coins", {"coin": SOUP_PRICE}, {}, after="soup")])
+                    [Deal(f"A bowl of hot soup: {SOUP_PRICE} coins", {"coin": SOUP_PRICE}, {}, after="soup")]
+                    + drink_deals(["a bowl of stew", "a mug of ale", "a cup of mulled wine", "a mug of hot cider"])
+                    + buy_deals(INN_FOOD))
+    elif a.kind == "baker":
+        shop = Trader(f"{a.name}, the baker", "Fresh from the oven. And I'll take apples off you, for the pies.",
+                      baker_deals, buys=True)
+    elif a.kind == "butcher":
+        shop = Trader(f"{a.name}, the butcher", "Best cuts in town. Bring me what you've hunted and I'll pay fair.",
+                      butcher_deals, buys=True)
     elif a.kind == "blacksmith":
         shop = Trader(f"{a.name}, the blacksmith", "Fresh from the forge. And I'll take any old iron off you.",
                       smith_deals, buys=True)

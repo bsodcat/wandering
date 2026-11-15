@@ -40,7 +40,7 @@ from . import lights
 from . import tiles as T
 from . import trees
 from .farming import CROP_LOOKS
-from .light import firelight, flame, flicker
+from .light import carried, carried_light, firelight, flame, flicker
 from .engine import OVERLAYS, Engine
 from .hud import draw_hud, draw_menu, draw_shop
 from .ui import FRAME, SCREEN_H, SCREEN_W
@@ -478,6 +478,7 @@ def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.nda
     animate_water(ch, fg, bg, wet, waves(gx, gy, *current, speed, seconds), gx, gy, seconds,
                   glints=not level.underground and c.light > 0.45 and c.precip < 0.15, deep=t == T.DEEP_WATER)
     shown = None
+    held = e.player.light if e.player.light_hours > 0 and level is e.level else None
     if level.underground:
         light = np.clip(1.15 - dist / (2 * e.sight_radius() + 2), 0.12, 1)[..., None]
         fg, bg = fg * light, bg * light
@@ -515,10 +516,17 @@ def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.nda
         warm = sky[..., None] * dusk
         fg = fg * (0.3 + 0.7 * light) + warm * np.array((30, 10, -10))
         bg = bg * (0.15 + 0.85 * light) + (1 - light) * np.array((0, 0, 18)) + warm * np.array((25, 8, -5))
-        if c.light < 0.4:   # your torch or lantern (or just the dim nearby you can make out)
+        if c.light < 0.4 and held is None:   # no light lit: just the dim nearby you can make out
             reach = max(1, lights.sight(e.player) - 1)
             glow = np.clip(1 - dist / (2 * reach), 0, 1)[..., None] * (0.4 - c.light)
             fg, bg = fg + base_fg * glow, bg + base_bg * glow
+    if held is not None:          # your torch or lantern: a warm pool of light that flickers
+        if level.underground:
+            gloom = np.ones(dist.shape, np.float32)
+        else:
+            gloom = np.clip(1.15 - 1.5 * np.where(sky, c.light, max(0.5, c.light * 0.8)), 0, 1)
+        glow = carried(held, lights.sight(e.player), dist, gloom, seconds) * visible
+        fg, bg = carried_light(fg, bg, base_fg, base_bg, glow, held)
     strength, phase = firelight(level)
     if level.underground:
         dark = 0.6
@@ -554,6 +562,15 @@ def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.nda
     return shown
 
 
+def held_on(e: Engine, x: int, y: int) -> float:
+    """How brightly your torch or lantern lights someone standing at (x, y)."""
+    p = e.player
+    if not p.light or p.light_hours <= 0:
+        return 0.0
+    dist = np.array([[np.hypot(x - e.lx, 2 * (y - e.ly))]])
+    return float(carried(p.light, lights.sight(p), dist, 1.0, 0.0)[0, 0]) * 1.1
+
+
 def draw_actors(console, e: Engine, ox: int, oy: int, canopy_shown) -> None:
     """People and animals you can see, dimmed by the dark but brighter by firelight. Anyone under
     the treetops (seen from above) is hidden by the leaves."""
@@ -571,7 +588,7 @@ def draw_actors(console, e: Engine, ox: int, oy: int, canopy_shown) -> None:
                 continue
         light = 1.0 if level.underground else (max(0.5, e.now.light * 0.8) if T.ROOF[level.tiles[a.x, a.y]]
                                                else e.now.light)
-        bright = min(1.0, max(0.4, light, float(strength[a.x, a.y]) * 1.2))
+        bright = min(1.0, max(0.4, light, float(strength[a.x, a.y]) * 1.2, held_on(e, a.x, a.y)))
         if getattr(a, "asleep", False):
             bright *= 0.6
         console.rgb["ch"][sx, sy] = ord(a.char)

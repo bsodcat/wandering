@@ -624,8 +624,8 @@ DEFAULT_LAND = farming.Land(0, 12.0, 0.5, -0.5)   # a temperate grassland, when 
 JUNK_THINGS = ["pottery shard", "old bone", "wooden spoon", "clay cup", "ball of twine", "iron nails", "old buckle",
                "brass button", "horseshoe", "spool of thread"]
 JUNK_SHARE = 0.35          # of an empty house's floor heaped with junk
-ABANDONED = 0.35           # how often a city has abandoned houses
-ABANDONED_SHARE = (0.052, 0.12)   # ... and what share of its empty houses have fallen in
+ABANDONED = 0.25           # how often a city has abandoned houses
+ABANDONED_SHARE = (0.1, 0.25)   # ... and what share of its (few) empty houses have fallen in
 
 
 def empty_houses(level: Level, site, rng: random.Random) -> None:

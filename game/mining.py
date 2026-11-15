@@ -103,6 +103,8 @@ def can_break(level, x: int, y: int) -> bool:
 def break_rock(engine, x: int, y: int) -> str:
     """Breaks the rock at (x, y) with your pickaxe; what it gave goes in your bag."""
     level, p = engine.level, engine.player
+    if getattr(engine, "mount", None) is not None:
+        return "You can't swing a pickaxe from the saddle. Get down first."
     if not p.inventory.count(PICK):
         return "You'd need a pickaxe to break that."
     if not can_break(level, x, y):

@@ -132,8 +132,41 @@ def climb(dh: int, graded: bool, roped: bool = False) -> tuple[bool, float, floa
     return True, slow, effort, message
 
 
-def passable(height: np.ndarray, tiles: np.ndarray, dx: int, dy: int) -> np.ndarray:
-    """Where a step by (dx, dy) from each tile isn't too steep (for finding a way)."""
+SOLID = (T.ROCK, T.CAVE_WALL)    # mountain rock and cave walls: no squeezing between two corners of them
+
+
+def squeeze(tiles: np.ndarray, x: int, y: int, dx: int, dy: int) -> bool:
+    """Whether a diagonal step from (x, y) slips between two corners of solid rock."""
+    w, h = tiles.shape
+    def solid(cx, cy):
+        return not (0 <= cx < w and 0 <= cy < h) or int(tiles[cx, cy]) in SOLID
+    return solid(x + dx, y) and solid(x, y + dy)
+
+
+def squeezes(tiles: np.ndarray, dx: int, dy: int) -> np.ndarray:
+    """squeeze() for every tile at once."""
+    return ~corners_open(~np.isin(tiles, SOLID), dx, dy)
+
+
+def corners_open(open_: np.ndarray, dx: int, dy: int) -> np.ndarray:
+    """Where a diagonal step by (dx, dy) has at least one of the two cells beside it open."""
+    w, h = open_.shape
+    side_x = np.zeros((w, h), bool)          # open_[x + dx, y]
+    side_y = np.zeros((w, h), bool)          # open_[x, y + dy]
+    if dx > 0:
+        side_x[:-1, :] = open_[1:, :]
+    else:
+        side_x[1:, :] = open_[:-1, :]
+    if dy > 0:
+        side_y[:, :-1] = open_[:, 1:]
+    else:
+        side_y[:, 1:] = open_[:, :-1]
+    return side_x | side_y
+
+
+def passable(height: np.ndarray, tiles: np.ndarray, dx: int, dy: int, step: int = MOST_STEP) -> np.ndarray:
+    """Where a step by (dx, dy) from each tile isn't too steep (for finding a way): `step`
+    levels at most (more on horseback)."""
     w, h = height.shape
     ok = np.zeros((w, h), bool)
     sx = slice(max(0, -dx), w - max(0, dx))
@@ -142,7 +175,7 @@ def passable(height: np.ndarray, tiles: np.ndarray, dx: int, dy: int) -> np.ndar
     ty = slice(max(0, dy), h - max(0, -dy))
     graded = np.isin(tiles, GRADED)
     diff = np.abs(height[tx, ty].astype(int) - height[sx, sy])
-    ok[sx, sy] = (diff <= MOST_STEP) | (graded[sx, sy] & graded[tx, ty])
+    ok[sx, sy] = (diff <= step) | (graded[sx, sy] & graded[tx, ty])
     return ok
 
 

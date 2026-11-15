@@ -9,6 +9,7 @@ import textwrap
 import numpy as np
 import tcod
 
+from .logcolour import print_coloured
 from . import biomes as B
 from . import combat
 from . import gear
@@ -339,7 +340,8 @@ def draw_log(console, e: Engine) -> None:
     w = Writer(console, e.panels.right_x + 2, 2, width)
     for i, text in enumerate(shown):
         newest = end - len(shown) + i >= len(lines) - 3
-        w.line(text, TEXT if newest else DIM)
+        print_coloured(console, w.x, w.y, text, TEXT if newest else DIM, width)     # nouns and numbers picked out
+        w.gap()
     hint = "PgUp/PgDn, wheel: scroll" if not e.panels.log_scroll else f"{e.panels.log_scroll} lines back; End"
     console.print(e.panels.right_x + 2, console.height - 1, hint[:width], fg=DIM)
 
@@ -413,7 +415,7 @@ def draw_strip(console, e: Engine) -> None:
     for i, text in enumerate(lines):
         age = len(lines) - 1 - i
         shade = max(110, 235 - age * 35)
-        console.print(x0 + 1, y0 + i, text[:width], fg=(shade, shade, shade))
+        print_coloured(console, x0 + 1, y0 + i, text, (shade, shade, shade), width)
 
 
 def draw_hud(console: tcod.console.Console, e: Engine, look: list[str], seconds: float) -> None:

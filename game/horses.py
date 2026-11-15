@@ -28,6 +28,8 @@ RIDE_LOCAL = 0.4
 RIDE_WORLD = 0.45
 RIDE_ROAD = 0.6
 CALL_REACH = 3              # regions away a horse still hears you call
+HORSE_STEP = 4              # levels a horse takes in one stride, up or down (on foot: elevation.MOST_STEP)
+HORSE_CLIMB = {1: (1.15, 0.0), 2: (1.3, 0.05), 3: (1.6, 0.1), 4: (2.0, 0.15)}   # (times as long, effort)
 HOURS_PER_REGION = 0.6      # its trot to you, a region
 NAMES = ["Bramble", "Chestnut", "Dapple", "Ember", "Fennel", "Gale", "Hazel", "Juniper", "Kestrel", "Maple",
          "Nettle", "Oakley", "Pepper", "Quill", "Rowan", "Sorrel", "Thistle", "Willow", "Clover", "Ash"]
@@ -66,8 +68,40 @@ def buy(engine) -> str:
     return f"The stablehand leads out {name}, a sturdy horse, into the paddock. It's yours (saddle it to ride)."
 
 
+def climb(dh: int, graded: bool) -> tuple[bool, float, float, str | None]:
+    """elevation.climb, on horseback: a horse takes banks up to HORSE_STEP high in its stride."""
+    if graded:
+        dh = max(-1, min(1, dh))
+    if dh == 0:
+        return True, 1.0, 0.0, None
+    if abs(dh) > HORSE_STEP:
+        return False, 1.0, 0.0, ("It's too steep even for a horse." if dh > 0 else "It's too far down to ride.")
+    slow, effort = HORSE_CLIMB[abs(dh)]
+    note = None
+    if abs(dh) > 2:
+        note = "Your horse scrambles up the bank." if dh > 0 else "Your horse picks its way down the bank."
+    return True, slow, effort, note
+
+
+def stuck_on_foot(engine, x: int, y: int) -> bool:
+    """Whether someone on foot at (x, y) couldn't step anywhere: too steep all round."""
+    from . import elevation
+    level = engine.level
+    here = int(level.elev[x, y])
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            nx, ny = x + dx, y + dy
+            if (dx or dy) and level.walkable(nx, ny):
+                graded = int(level.tiles[nx, ny]) in elevation.GRADED and int(level.tiles[x, y]) in elevation.GRADED
+                if elevation.climb(int(level.elev[nx, ny]) - here, graded)[0]:
+                    return False
+    return True
+
+
 def saddle(engine, a) -> str:
     bag = engine.player.inventory
+    if getattr(a, "keeper", ""):
+        return f"That's one of {a.keeper}' horses. The groom would have the guards on you."
     if getattr(a, "saddled", False):
         return f"{display(a)} is already saddled."
     if not bag.take(SADDLE):
@@ -105,6 +139,8 @@ def can_ride_here(engine) -> str | None:
 
 
 def mount(engine, a) -> str:
+    if getattr(a, "keeper", ""):
+        return f"That's one of {a.keeper}' horses, not yours to ride."
     if not getattr(a, "saddled", False):
         return f"{display(a).capitalize()} needs a saddle on first."
     if engine.mount is not None:
@@ -151,6 +187,8 @@ def dismount(engine, why: str = "") -> str:
         return "You're not riding."
     if engine.level is None:
         return "Step down into the region first."
+    if not why and stuck_on_foot(engine, engine.lx, engine.ly):
+        return "It's too steep here to get down: on foot you'd be stuck. Ride on to gentler ground."
     spot = beside(engine) or (engine.lx, engine.ly)
     engine.mount = None
     set_down(engine, a, *spot)

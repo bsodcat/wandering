@@ -22,6 +22,13 @@ TIMEOUT = 8          # seconds
 
 # What's new, newest first: (version, headline, [what changed])
 NOTES = [
+    ("1.4.0-beta.3", "Beta test: lived-in cities, halls, firelight, riding and the wait menu", [
+        "Lived-in cities: households in nearly every house, days of many parts, market day, school, people who stop to talk.",
+        "New halls (bathhouse, mage tower, Adventurers' Hall, graveyard ...) and guards' stables in cities and forts.",
+        "Warm, flickering torch and lantern light; campfires you can feed up to 3 stages; ashes, lye and soap.",
+        "Riding: steeper banks, mounted blows; no felling, mining or fires from the saddle; no squeezing between rocks.",
+        "Baker, butcher and inn menus; r: the wait menu; nouns and numbers coloured in the log.",
+    ]),
     ("1.4.0-beta.2", "Beta test: living cities, crafting, horses and mining", [
         "Stone cities come alive: craftsfolk, townsfolk, beggars, merchants, homemakers and children at play.",
         "A keep in every city (throne room, great hall, library, barracks, a dungeon) and its court.",

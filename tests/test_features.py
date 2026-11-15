@@ -262,7 +262,7 @@ class ToolTests(unittest.TestCase):
         text = "".join(chr(c) for c in console.rgb["ch"].T.flatten())
         self.assertIn("A room for the night", text)
         x, y, w, h = e.shop.box()
-        self.assertTrue(e.shop.click(x + 10, e.shop.row_y(1), e) is False)   # Leave
+        self.assertTrue(e.shop.click(x + 10, e.shop.row_y(len(e.shop.deals)), e) is False)   # Leave
 
 
 class DiggingTests(unittest.TestCase):

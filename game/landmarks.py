@@ -19,6 +19,9 @@ of that each part has its own landmarks (CITY_PLANS), so the four parts of a cit
 - a temple with an altar and pews (a part without one has a small chapel), and the gallows yard: a gallows on its platform, stocks
 - a playhouse with a stage and benches, and a fighting pit ringed by a fence
 - the guildhall, an alchemist's, and a market row of stalls along the main street
+- and the halls of game/halls.py: a bathhouse, a counting house and a training yard by the keep;
+  a graveyard, a foundling house and a house of healing by the temple; the Adventurers' Hall, a
+  brewhouse and a tannery by the pit; a mage tower and a schoolhouse by the guildhall
 
 and besides:
 - the city garden, just inside a gate of the part with the guildhall: hedges round flower
@@ -41,7 +44,10 @@ from . import tiles as T
 from .level import Building, Level, Place
 from .structures import EDGE, building, connect, furnish, inn_stairs, put_inside, ways
 
-CITY_PLANS = [("keep",), ("temple", "gallows"), ("playhouse", "pit"), ("guildhall", "alchemist", "market")]
+CITY_PLANS = [("keep", "counting_house", "bathhouse", "training_yard"),
+              ("temple", "gallows", "graveyard", "orphanage", "healer"),
+              ("playhouse", "pit", "adventurers", "brewhouse", "tannery"),
+              ("guildhall", "alchemist", "market", "mage_tower", "school")]   # (the halls: game/halls.py)
 KEEP_W, KEEP_H = 80, 34          # the keep's curtain wall, outside to outside
 OPEN = [T.GRASS, T.DIRT, T.STUMP, T.DRY_GRASS, T.SAND, T.MUD, T.TALL_GRASS]
 GODS = ["the Dawn", "the Hearth", "the Harvest Mother", "the Silent Judge", "the Sea Father", "the Lantern"]
@@ -661,3 +667,4 @@ def dungeon_level(key: tuple, site, rng: random.Random) -> Level:
         x, y = rng.choice(cell)
         level.actors.append(Actor("prisoner", person_name(rng, used), x, y, home=cell, work=cell, evening=cell))
     return level
+
