@@ -8,6 +8,7 @@ import time
 import tcod
 
 from game import __version__
+from game.ui import FRAME
 from game.display import Display, make_tileset
 from game.engine import Engine
 from game.hud import draw_menu
@@ -142,7 +143,7 @@ def draw_passage(console, passage: Passage, hover: tuple | None = None) -> None:
     console.rgb["fg"] = console.rgb["fg"] // 5
     console.rgb["bg"] = console.rgb["bg"] // 5
     x, y, pw, ph = passage_box(console)
-    console.draw_frame(x - 1, y - 1, pw + 2, ph + 2, fg=BOX_BORDER, bg=BOX_BG)
+    console.draw_frame(x - 1, y - 1, pw + 2, ph + 2, fg=BOX_BORDER, bg=BOX_BG, decoration=FRAME)
     shown = passage.shown
     if shown is not None:
         half_blocks(console, x, y, world_preview(shown[1], pw, ph))

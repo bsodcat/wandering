@@ -3,7 +3,7 @@ panels over it (stats, info, minimap, log) are game/hud.py.
 
 The map is coloured a whole view at a time with numpy: biome colours, then rivers, roads and
 sites, then the weather and the daylight on what you can see. Places you've seen but can't see
-now are drawn grey from memory. The overlays (o) show the raw fields for tuning the
+now are drawn grey from memory (on a local map, under a veil that's darker on lower ground). The overlays (o) show the raw fields for tuning the
 generator: elevation, temperature right now, moisture and weather.
 
 Local maps are drawn the same way, tile by tile: under the open sky they take the region's
@@ -20,8 +20,12 @@ the tile they're on.
 
 Floors above the ground (an inn's rooms, a tower) are drawn over the ground they stand on:
 where the floor isn't seen yet, and all around it, the ground below shows through. Indoors it's
-only the ground you remember, fading out the further it is from you; from a rooftop, out in the
+only the ground you remember, dimmer the further it is from you; from a rooftop, out in the
 open, you see it, hazier with distance.
+
+Remembered ground (seen before, out of sight now) is drawn under a see-through veil of darkness
+whose depth follows the relief view's scale: the low ground darkest, the high ground lightest,
+blended smoothly from one level to the next (memory_veil).
 """
 from __future__ import annotations
 
@@ -32,17 +36,19 @@ import tcod
 
 from . import biomes as B
 from . import items
+from . import lights
 from . import tiles as T
 from . import trees
 from .farming import CROP_LOOKS
 from .light import firelight, flame, flicker
 from .engine import OVERLAYS, Engine
 from .hud import draw_hud, draw_menu, draw_shop
-from .ui import SCREEN_H, SCREEN_W
+from .ui import FRAME, SCREEN_H, SCREEN_W
 from .worldgen import SITE_KINDS
 
 MAP_W, MAP_H = SCREEN_W, SCREEN_H      # the map's default size: the whole screen (the panels lie over it)
 CURSOR_BG, ROUTE_BG = np.array((200, 190, 90)), np.array((90, 120, 170))
+RIDING_BG = (120, 80, 45)
 RIVER_FG, ROAD_FG, BRIDGE_FG = (90, 150, 235), (185, 150, 95), (200, 160, 100)
 
 
@@ -161,7 +167,7 @@ def burn(ch, fg, bg, t, visible, strength, phase, dark, base_fg, base_bg, second
     amount = (strength * flicker(phase, seconds) * dark * lit)[..., None]
     fg += base_fg * amount * 0.9 + amount * FIRE_FG
     bg += base_bg * amount * 0.8 + amount * FIRE_BG
-    flames = np.isin(t, [T.HEARTH, T.TORCH, T.OVEN, T.LAVA]) & visible
+    flames = np.isin(t, [T.HEARTH, T.TORCH, T.OVEN, T.LAVA, T.CAMPFIRE]) & visible
     if flames.any():
         step, colours = flame(phase, seconds)
         fg[flames] = colours[flames]
@@ -268,12 +274,17 @@ def draw_map(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -> 
     out["ch"] = ch
     out["fg"] = np.clip(fg, 0, 255).astype(np.uint8)
     out["bg"] = np.clip(bg, 0, 255).astype(np.uint8)
+    if int(seconds * 2) % 2 == 0:            # your horses, blinking where you left them
+        from . import horses
+        for hx, hy in horses.regions(e):
+            if cx <= hx < cx + vw and cy <= hy < cy + vh:
+                console.print(hx - ox, hy - oy, "H", fg=(235, 190, 120))
     p = e.player
-    console.print(p.x - ox, p.y - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
+    console.print(p.x - ox, p.y - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60),
+                  bg=RIDING_BG if e.mount is not None else None)
 
 
 SNOW_FG, SNOW_BG = np.array((235, 240, 250)), np.array((170, 178, 195))
-LANTERN_GLOW = 5   # tiles your lantern brightens on a dark night outdoors
 RELIEF = [(0.0, (30, 70, 40)), (0.35, (95, 120, 55)), (0.65, (130, 100, 65)), (0.85, (150, 140, 130)),
           (1.0, (225, 225, 235))]
 CUTAWAY = 4.3      # how far around you (in columns) you see under the treetops
@@ -289,9 +300,9 @@ LEAVES = {
 BARE_FG = np.array((125, 95, 65))
 
 
-def leaf_layer(canopy, boughs, look: str, gx, gy):
+def leaf_layer(canopy, boughs, look, gx, gy):
     """Glyphs and colours for the treetops, and which tiles you can see the ground through
-    (bare boughs in winter)."""
+    (bare boughs in winter). `look` is the broadleaf look of each tile (or one for all)."""
     ch = np.zeros(canopy.shape, np.int32)
     fg = np.zeros(canopy.shape + (3,))
     bg = np.zeros(canopy.shape + (3,))
@@ -299,8 +310,7 @@ def leaf_layer(canopy, boughs, look: str, gx, gy):
     for (kind, when), (first, second, share, colours, back) in LEAVES.items():
         here = canopy == kind
         if when is not None:
-            if look != when:
-                continue
+            here = here & (look == when)
         if not here.any():
             continue
         ch[here] = np.where(r[here] < share, ord(first), ord(second))
@@ -324,12 +334,14 @@ def draw_local(console: tcod.console.Console, e: Engine, seconds: float = 0.0) -
     draw_actors(console, e, ox, oy, shown if not level.underground else None)
     draw_carts(console, e, ox, oy)
     p = e.player
-    console.print(e.lx - ox, e.ly - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60))
+    console.print(e.lx - ox, e.ly - oy, "@", fg=(255, 255, 255) if p.alive else (200, 60, 60),
+                  bg=RIDING_BG if e.mount is not None else None)     # on horseback: a horse-brown ground
 
 
 BELOW_HAZE = 70        # tiles off: the ground seen from a rooftop is that much hazier by then
-BELOW_FADE = 34        # tiles off: the ground you only remember from up here has faded out by then
+BELOW_FADE = 34        # tiles off: the ground you only remember from up here has dimmed to BELOW_FAR by then
 BELOW_MEMORY = 0.85    # how bright the remembered ground is right under you
+BELOW_FAR = 0.55       # and far off: it dims with distance, but never to black
 HAZE = np.array((150, 165, 185))
 
 
@@ -347,7 +359,8 @@ def draw_below(console, e: Engine, ground, gox: int, goy: int, at: tuple[int, in
     dist = np.sqrt((xs - at[0]) ** 2 + (2 * (ys - at[1])) ** 2)
     now = vis[view]
     haze = (np.clip(dist / BELOW_HAZE, 0, 1) * 0.45)[..., None] * now[..., None]
-    fade = np.where(now, 1.0, BELOW_MEMORY * np.clip(1 - dist / BELOW_FADE, 0, 1) ** 1.5)[..., None]
+    near = np.clip(1 - dist / BELOW_FADE, 0, 1) ** 1.5
+    fade = np.where(now, 1.0, BELOW_MEMORY * (BELOW_FAR + (1 - BELOW_FAR) * near))[..., None]
     out = console.rgb[sx0: sx0 + vw, sy0: sy0 + vh]
     for part, tint in (("fg", HAZE), ("bg", HAZE * 0.6)):
         c = out[part].astype(np.float32)
@@ -398,6 +411,26 @@ def relief_light(level, view, at) -> tuple[np.ndarray, np.ndarray]:
     return shade.astype(np.float32), shadow[cut].astype(np.float32)
 
 
+MEMORY_VEIL = (0.72, 0.28)   # how dark the veil over remembered ground is: on the lowest ground, the highest
+MEMORY_GREY = 0.3            # and how much of its colour is drained
+MEMORY_DARK = np.array((4, 6, 12), np.float32)   # the darkness it's drawn towards
+
+
+def memory_veil(level, view) -> np.ndarray:
+    """0 (clear) .. 1 (dark) for each tile in view, from its height on the same scale as the
+    relief view (o): the lowest ground on the map darkest, the highest lightest, blurred so the
+    steps between levels make a smooth gradient. A flat map gets the middle."""
+    xs, ys = view
+    x0, x1 = max(0, xs.start - 2), min(level.width, xs.stop + 2)
+    y0, y1 = max(0, ys.start - 1), min(level.height, ys.stop + 1)
+    elev = smooth(level.elev[x0:x1, y0:y1].astype(np.float32), 2, 1)
+    elev = elev[xs.start - x0: xs.stop - x0, ys.start - y0: ys.stop - y0]
+    lo, hi = float(level.elev.min()), float(level.elev.max())
+    height = (elev - lo) / (hi - lo) if hi > lo else np.full(elev.shape, 0.5, np.float32)
+    low, high = MEMORY_VEIL
+    return (low + (high - low) * np.clip(height, 0, 1)).astype(np.float32)
+
+
 def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.ndarray,
                 at: tuple[int, int], seconds: float, keep: np.ndarray | None = None):
     """Draws a level's tiles from origin (ox, oy) as seen from `at`. With `keep`, only those
@@ -414,6 +447,10 @@ def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.nda
             here = t == tile
             if look is not None and here.any():
                 ch[here], fg[here], bg[here] = ord(look[0]), look[1], look[2]
+    for (ox_, oy_), kind in level.ore.items():   # ore veins show the colour of their ore
+        vx, vy = ox_ - cx, oy_ - cy
+        if 0 <= vx < vw and 0 <= vy < vh and t[vx, vy] == T.ORE_VEIN:
+            fg[vx, vy] = items.KINDS[kind].colour
     elev = level.elev[view].astype(np.float32)
     if level.elev.max() > level.elev.min():       # the lie of the land
         shade, shadow = relief_light(level, view, at)
@@ -447,7 +484,7 @@ def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.nda
     else:
         sky = ~T.ROOF[t]
         canopy = level.canopy[view]
-        leaf_ch, leaf_fg, leaf_bg, bare = leaf_layer(canopy, level.boughs[view], e.foliage, gx, gy)
+        leaf_ch, leaf_fg, leaf_bg, bare = leaf_layer(canopy, level.boughs[view], trees.foliage(e.lat, e.minutes, trees.turn_delay(gx, gy)), gx, gy)
         leaves = canopy > 0
         dense = leaves & ~bare                     # keeps the rain and snow off the ground
         shown = leaves & (dist > CUTAWAY) if e.treetops else np.zeros_like(leaves)
@@ -478,8 +515,9 @@ def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.nda
         warm = sky[..., None] * dusk
         fg = fg * (0.3 + 0.7 * light) + warm * np.array((30, 10, -10))
         bg = bg * (0.15 + 0.85 * light) + (1 - light) * np.array((0, 0, 18)) + warm * np.array((25, 8, -5))
-        if c.light < 0.4:   # your lantern
-            glow = np.clip(1 - dist / (2 * LANTERN_GLOW), 0, 1)[..., None] * (0.4 - c.light)
+        if c.light < 0.4:   # your torch or lantern (or just the dim nearby you can make out)
+            reach = max(1, lights.sight(e.player) - 1)
+            glow = np.clip(1 - dist / (2 * reach), 0, 1)[..., None] * (0.4 - c.light)
             fg, bg = fg + base_fg * glow, bg + base_bg * glow
     strength, phase = firelight(level)
     if level.underground:
@@ -496,8 +534,12 @@ def paint_level(console, e: Engine, level, ox: int, oy: int, visible_all: np.nda
             fg[vx, vy] = np.array(kind.colour) * lit
             base_fg[vx, vy] = kind.colour
     memory = seen & ~visible
-    fg[memory] = base_fg[memory] * 0.35 + base_fg[memory].mean(axis=-1, keepdims=True) * 0.15 + 12
-    bg[memory] = base_bg[memory] * 0.18 + 5
+    if memory.any():                              # remembered: under a veil, darker the lower the ground
+        veil = memory_veil(level, view)[memory][:, None]
+        for now, then in ((fg, base_fg), (bg, base_bg)):
+            was = then[memory].astype(np.float32)
+            was = was * (1 - MEMORY_GREY) + was.mean(axis=-1, keepdims=True) * MEMORY_GREY
+            now[memory] = was * (1 - veil) + MEMORY_DARK * veil
     hidden = ~seen
     ch[hidden], fg[hidden], bg[hidden] = ord(" "), 0, 0
     out = console.rgb[sx0: sx0 + vw, sy0: sy0 + vh]
@@ -630,7 +672,7 @@ def draw_riding(console, e: Engine) -> None:
              " Esc: menu "]
     w = max(len(line) for line in lines) + 2
     x, y = (console.width - w) // 2, 2
-    console.draw_frame(x, y, w, len(lines) + 2, fg=(150, 120, 80), bg=(20, 16, 12))
+    console.draw_frame(x, y, w, len(lines) + 2, fg=(150, 120, 80), bg=(20, 16, 12), decoration=FRAME)
     for i, line in enumerate(lines):
         colour = (255, 225, 150) if i == 0 else (200, 200, 190) if i == 1 else (130, 130, 120)
         console.print(x + (w - len(line)) // 2, y + 1 + i, line, fg=colour, bg=(20, 16, 12))

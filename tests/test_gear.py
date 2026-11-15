@@ -244,3 +244,42 @@ class EquipmentMenuTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WarmClothesTests(unittest.TestCase):
+    def test_an_underlayer_goes_under_the_body_piece(self):
+        p = Player(0, 0)
+        kit(p, "mail shirt", "wool shirt")
+        self.assertEqual(gear.worn(p)["body"], "mail shirt")
+        self.assertEqual(gear.worn(p)["under"], "wool shirt")
+        self.assertEqual(gear.warmth(p), 2)          # mail -1, wool +3
+
+    def test_layers_keep_you_warmer_in_the_cold(self):
+        cold = Conditions(air=-8.0, cloud=0.3, precip=0.0, wind=3.0, fog=0.0, light=0.5, kind="Clear")
+        bare, layered = Player(0, 0), Player(0, 0)
+        kit(layered, "quilted underclothes", "sheepskin coat", "wolfskin cloak", "wool hood", "wool mittens")
+        self.assertGreater(insulation(layered), insulation(bare) + 15)
+        expose(bare, 4, cold, 0.0)
+        expose(layered, 4, cold, 0.0)
+        self.assertGreater(layered.body, bare.body)
+
+    def test_the_tailor_makes_a_cloak_from_two_pelts(self):
+        e = engine_on(field())
+        bag = e.player.inventory
+        bag.add("wolf pelt", 2)
+        bag.add("coin", 10)
+        deal = next(d for d in shops.tailor_deals(e) if "wolfskin cloak" in d.get and "wolf pelt" in d.pay)
+        self.assertEqual(deal.pay, {"wolf pelt": 2, "coin": shops.CLOAK_FEE})
+        self.assertTrue(any(d.sell and "wolf pelt" in d.pay for d in shops.tailor_deals(e)))
+        bag.take("wolf pelt")
+        self.assertFalse(any("wolf pelt" in d.pay and not d.sell for d in shops.tailor_deals(e)))
+
+    def test_skinning_a_wolf_needs_a_blade(self):
+        e = engine_on(field())
+        bag = e.player.inventory
+        bag.add("wolf carcass")
+        self.assertIn("nothing sharp", e.skin())
+        self.assertEqual(bag.count("wolf carcass"), 1)
+        bag.add("dagger")
+        e.skin()
+        self.assertEqual((bag.count("wolf carcass"), bag.count("wolf pelt")), (0, 1))

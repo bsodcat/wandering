@@ -21,6 +21,8 @@ This module keeps the title screen's state and draws it; main.py starts whatever
 """
 from __future__ import annotations
 
+from .ui import FRAME
+
 import random
 import textwrap
 
@@ -583,7 +585,7 @@ def draw_create(console, title: Title) -> None:
             mid=mid)
     y, pw, ph = lay["preview"]
     x = mid - pw // 2
-    console.draw_frame(x - 1, y - 1, pw + 2, ph + 2, fg=BOX_BORDER, bg=BOX_BG)
+    console.draw_frame(x - 1, y - 1, pw + 2, ph + 2, fg=BOX_BORDER, bg=BOX_BG, decoration=FRAME)
     seed = title.seed
     if seed is None:
         console.draw_rect(x, y, pw, ph, ord(" "), bg=BOX_BG)
@@ -632,7 +634,7 @@ def draw_create(console, title: Title) -> None:
 def draw_side(console, title: Title, lay: dict) -> None:
     """The World settings bar: each setting and its step, Defaults, and what the picked one does."""
     x, y, w, h = lay["side"]
-    console.draw_frame(x, y, w, h, fg=BOX_BORDER, bg=BOX_BG)
+    console.draw_frame(x, y, w, h, fg=BOX_BORDER, bg=BOX_BG, decoration=FRAME)
     console.print(x + (w - 16) // 2, y, " World settings ", fg=PURPLE if title.side else DIM, bg=BOX_BG)
     changed = title.tweaks.changed()
     note = f"{len(changed)} changed" if changed else "all at their usual"
@@ -738,7 +740,7 @@ def draw_region_info(console, lines: list[str], mx: int, my: int) -> None:
     x = mx + 2 if mx + 2 + w <= console.width else mx - 1 - w
     y = min(max(0, my + 1), console.height - h)
     x = max(0, x)
-    console.draw_frame(x, y, w, h, fg=BOX_BORDER, bg=BOX_BG)
+    console.draw_frame(x, y, w, h, fg=BOX_BORDER, bg=BOX_BG, decoration=FRAME)
     for i, line in enumerate(lines):
         console.print(x + 2, y + 1 + i, line[: w - 4], fg=PICKED_FG if i == 0 else TEXT, bg=BOX_BG)
 
@@ -770,7 +772,7 @@ def draw_view(console, title: Title, world: World, box, spot, is_spawn: bool, is
     """The Region view: the region close up, and what's there."""
     import game.tiles as T
     x, y, w, h = box
-    console.draw_frame(x, y, w, h, fg=BOX_BORDER, bg=BOX_BG)
+    console.draw_frame(x, y, w, h, fg=BOX_BORDER, bg=BOX_BG, decoration=FRAME)
     console.print(x + (w - 8) // 2, y, " Region ", fg=PURPLE, bg=BOX_BG)
     if spot is None:
         console.print(x + 2, y + 2, "Point at the map"[: w - 4], fg=DIM, bg=BOX_BG)
@@ -802,7 +804,7 @@ def draw_about(console) -> None:
     paras = [textwrap.wrap(p, width - 6) for p in ABOUT]
     h = 9 + sum(len(p) + 1 for p in paras) + 2
     x, y = (console.width - width) // 2, max(1, (console.height - h) // 2 - 1)
-    console.draw_frame(x, y, width, h, fg=BOX_BORDER, bg=BOX_BG)
+    console.draw_frame(x, y, width, h, fg=BOX_BORDER, bg=BOX_BG, decoration=FRAME)
     console.print(x + (width - 7) // 2, y, " About ", fg=PURPLE, bg=BOX_BG)
     centred(console, y + 2, GAME_TITLE, PURPLE, BOX_BG)
     centred(console, y + 3, SUBTITLE, WHITE, BOX_BG)
@@ -821,7 +823,7 @@ def draw_updates(console, title: Title) -> None:
     """What's new in each version, scrolling, and below it the update check."""
     lay = updates_layout(console.width, console.height)
     x, y, w, h = lay["x"], lay["y"], lay["w"], lay["h"]
-    console.draw_frame(x, y, w, h, fg=BOX_BORDER, bg=BOX_BG)
+    console.draw_frame(x, y, w, h, fg=BOX_BORDER, bg=BOX_BG, decoration=FRAME)
     console.print(x + (w - 9) // 2, y, " Updates ", fg=PURPLE, bg=BOX_BG)
     notes = updates.lines(w - 6)
     shown = lay["notes_rows"]

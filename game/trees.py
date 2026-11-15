@@ -9,6 +9,8 @@ leaves are down).
 
 Broadleaf trees follow the seasons: buds in spring, green in summer, colours in autumn, bare
 boughs in winter. Pines and jungle trees keep their leaves, as do broadleaf trees in the tropics.
+A wood doesn't change all at once: each change spreads over a week (TURNING_DAYS), every leafy
+tile turning on its own day, a little ahead of or behind the trees around it (turn_delay).
 
 Trees never crowd a way in: trunks are cleared from around doors, gates, stairs and wells, and
 no leaves hang over buildings, streets, roads or paths.
@@ -18,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import tiles as T
-from .climate import MIDSUMMER, year_fraction
+from .climate import DAYS_PER_YEAR, MIDSUMMER, year_fraction
 
 NONE, BROADLEAF, PINE, JUNGLE = range(4)
 KIND = {T.TREE: BROADLEAF, T.PINE: PINE, T.JUNGLE_TREE: JUNGLE}
@@ -121,20 +123,32 @@ def keep_clear(canopy: np.ndarray, boughs: np.ndarray, tiles: np.ndarray, exits=
 
 # ----------------------------------------------------------------- seasons
 
-def foliage(lat: float, minutes: float) -> str:
-    """What broadleaf trees look like now: "green", "budding", "autumn" or "bare"."""
+TURNING_DAYS = 7          # each change of the leaves spreads over this many days
+GROVE = (6, 3)            # tiles (wide, tall) that turn about together
+STAGES = [(0.13, "green"), (0.3, "autumn"), (0.68, "bare"), (0.8, "budding"), (1.01, "green")]   # by phase
+
+
+def foliage(lat: float, minutes: float, delay=0.0):
+    """What broadleaf trees look like now: "green", "budding", "autumn" or "bare". `delay` (0..1,
+    one number or an array: see turn_delay) is how far into the week of turning a tree is late
+    to change; an array of delays gives an array of looks."""
     if abs(lat) < TROPICS:
-        return "green"
+        return "green" if np.ndim(delay) == 0 else np.full(np.shape(delay), "green", "<U7")
     phase = (float(year_fraction(minutes)) - MIDSUMMER + (0.5 if lat > 0 else 0.0)) % 1.0  # 0 midsummer
-    if phase < 0.13:
-        return "green"
-    if phase < 0.3:
-        return "autumn"
-    if phase < 0.68:
-        return "bare"
-    if phase < 0.8:
-        return "budding"
-    return "green"
+    phase = (phase - np.asarray(delay, np.float64) * TURNING_DAYS / DAYS_PER_YEAR) % 1.0
+    looks = np.select([phase < edge for edge, _ in STAGES], [look for _, look in STAGES], "green")
+    return str(looks) if looks.ndim == 0 else looks.astype("<U7")
+
+
+def turn_delay(gx, gy) -> np.ndarray:
+    """A steady 0..1 for each tile (global coordinates): how late in the week its leaves turn.
+    Half is shared by the grove around it, so neighbours turn about together."""
+    def hash01(x, y, salt):
+        h = (np.asarray(x, np.int64) * 374761393 + np.asarray(y, np.int64) * 668265263 + salt) & 0xFFFFFFFF
+        h = (h ^ (h >> 13)) * 1274126177 & 0xFFFFFFFF
+        return ((h ^ (h >> 16)) & 0xFFFF) / 65536.0
+    gx, gy = np.asarray(gx, np.int64), np.asarray(gy, np.int64)
+    return 0.5 * hash01(gx, gy, 911) + 0.5 * hash01(gx // GROVE[0], gy // GROVE[1], 4049)
 
 
 LEAF_SHELTER = {"green": 0.45, "budding": 0.3, "autumn": 0.35, "bare": 0.1}

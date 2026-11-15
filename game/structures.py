@@ -59,6 +59,9 @@ def box_ok(level: Level, x0: int, y0: int, x1: int, y1: int, margin: int = 1) ->
             or y1 + margin >= level.height - EDGE:
         return False
     area = level.tiles[x0 - margin: x1 + margin + 1, y0 - margin: y1 + margin + 1]
+    off = getattr(level, "_keep_off", None)      # a city's banks (game/cities.py)
+    if off is not None and off[x0 - margin: x1 + margin + 1, y0 - margin: y1 + margin + 1].any():
+        return False
     return bool(T.CLEARABLE[area].all())
 
 
@@ -175,7 +178,7 @@ def furnish(level: Level, rng: random.Random, x0: int, y0: int, w: int, h: int, 
         for _ in range(count):
             while walls and not put_inside(t, walls.pop(), tile, box):
                 pass
-    middle_tiles = [c for c in inside if t[c] in (T.WOOD_FLOOR, T.STONE_FLOOR) and not by_door(*c)
+    middle_tiles = [c for c in inside if t[c] in (T.WOOD_FLOOR, T.STONE_FLOOR, T.CARPET) and not by_door(*c)
                     and c[0] not in (x0 + 1, x0 + w - 2) and c[1] not in (y0 + 1, y0 + h - 2)]
     rng.shuffle(middle_tiles)
     for _ in range(tables):
@@ -400,13 +403,13 @@ def inn_name(rng: random.Random) -> str:
     return f"The {rng.choice(INN_WORDS[0])} {rng.choice(INN_WORDS[1])}"
 
 
-def inn_building(level: Level, rng: random.Random, ring, sizes=((13, 15), (7, 8))):
+def inn_building(level: Level, rng: random.Random, ring, sizes=((13, 15), (7, 8)), box=None):
     """A big common room: a bar along the wall across from the door with kegs at its ends, a
     hearth and benches by the side walls, tables in the middle, a sign and a torch by the door.
     The beds are all upstairs (inn_upstairs). Returns the tile outside the door, or None if it
     didn't fit."""
-    box = (place_box(level, rng, sizes, ring)
-           or place_box(level, rng, ((12, 13), (7, 7)), (ring[0], ring[1] + 12)))   # smaller, further out
+    box = box or (place_box(level, rng, sizes, ring)
+                  or place_box(level, rng, ((12, 13), (7, 7)), (ring[0], ring[1] + 12)))   # smaller, further out
     if box is None:
         return None
     x0, y0, w, h = box
@@ -452,22 +455,23 @@ def inn_building(level: Level, rng: random.Random, ring, sizes=((13, 15), (7, 8)
     return outside
 
 
-def inn_stairs(level: Level, x0: int, y0: int, x1: int, y1: int, door) -> None:
-    """Stairs up to the guest rooms and down to the cellar, in the inn's corners away from the
-    door."""
+def inn_stairs(level: Level, x0: int, y0: int, x1: int, y1: int, door,
+               ways=("inn_up", "cellar")) -> None:
+    """Stairs up to the guest rooms and down to the cellar (or the floors named in `ways`), in
+    the building's corners away from the door."""
     t = level.tiles
     corners = [(x0 + 1, y0 + 1), (x1 - 1, y0 + 1), (x0 + 1, y1 - 1), (x1 - 1, y1 - 1)]
     corners.sort(key=lambda c: -((c[0] - door[0]) ** 2 + (2 * (c[1] - door[1])) ** 2))
-    for (x, y), way in zip(corners[:2], (("inn_up", T.STAIRS_UP), ("cellar", T.STAIRS_DOWN))):
+    for (x, y), way in zip(corners[:2], ((ways[0], T.STAIRS_UP), (ways[1], T.STAIRS_DOWN))):
         t[x, y] = way[1]
         level.exits[(x, y)] = (way[0], *level.region, 1)
 
 
-def shop(level: Level, rng: random.Random, kind: str, name: str, ring):
+def shop(level: Level, rng: random.Random, kind: str, name: str, ring, box=None):
     """A bakery (bread ovens, flour, a counter), a butcher's (meat hooks, a counter) or an
     armourer's (weapon racks, a counter)."""
-    box = (place_box(level, rng, ((8, 10), (6, 7)), ring)
-           or place_box(level, rng, ((7, 8), (5, 6)), (ring[0], ring[1] + 12)))   # smaller, further out
+    box = box or (place_box(level, rng, ((8, 10), (6, 7)), ring)
+                  or place_box(level, rng, ((7, 8), (5, 6)), (ring[0], ring[1] + 12)))   # smaller, further out
     if box is None:
         return None
     x0, y0, w, h = box
@@ -497,6 +501,9 @@ def build_town(level: Level, site, rng: random.Random, land=None) -> None:
     doors += houses(level, rng, rng.randint(11, 16), (9, 36))
     gates = fields(level, rng, rng.randint(3, 5), (36, 50))
     gates += pastures(level, rng, 1, (36, 50), farming.herd_for(land))
+    if random.Random(f"paddock{site.name}").random() < TOWN_PADDOCK:     # horses, and a stablehand
+        gates += fields(level, random.Random(f"paddock{site.name}{site.x}"), 1, (30, 50),
+                        sizes=((8, 11), (4, 6)), crop=T.DIRT, kind="pasture", animal="horse")
     foot = docks(level, rng) if site.port else None
     camp = lumber_camp(level, rng)
     for start in doors + gates + [s for s in (foot, camp) if s]:
@@ -614,6 +621,84 @@ CLEARED = 0.5      # how often a town or village has cleared the woods around it
 DEFAULT_LAND = farming.Land(0, 12.0, 0.5, -0.5)   # a temperate grassland, when none is given
 
 
+JUNK_THINGS = ["pottery shard", "old bone", "wooden spoon", "clay cup", "ball of twine", "iron nails", "old buckle",
+               "brass button", "horseshoe", "spool of thread"]
+JUNK_SHARE = 0.35          # of an empty house's floor heaped with junk
+ABANDONED = 0.35           # how often a city has abandoned houses
+ABANDONED_SHARE = (0.052, 0.12)   # ... and what share of its empty houses have fallen in
+
+
+def empty_houses(level: Level, site, rng: random.Random) -> None:
+    """Every house somebody lives in keeps its furniture. The rest have been cleared out and
+    used to store junk; and in some cities (ABANDONED) a share of them are abandoned, the doors
+    gone and the walls and roofs fallen in."""
+    lived = set()
+    for a in level.actors:
+        if a.home and not a.animal:
+            b = level.building_at(*a.home[0])
+            if b is not None:
+                lived.add(id(b))
+    share = 0.0
+    if site.kind == "city" and random.Random(f"abandoned {site.name}").random() < ABANDONED:
+        share = random.Random(f"how many {site.name}").uniform(*ABANDONED_SHARE)
+    for b in level.buildings:
+        if b.kind != "house" or id(b) in lived:
+            continue
+        if share and rng.random() < share:
+            abandon(level, b, rng)
+        else:
+            junk_house(level, b, rng)
+
+
+def strip(level: Level, b, rng: random.Random) -> list:
+    """Takes the furniture out of a building. Returns the floor tiles inside."""
+    t = level.tiles
+    x0, y0, x1, y1 = b.x0, b.y0, b.x0 + b.w - 1, b.y0 + b.h - 1
+    floor = T.STONE_FLOOR if t[x0, y0] == T.STONE_WALL else T.WOOD_FLOOR
+    inside = [(x, y) for x in range(x0 + 1, x1) for y in range(y0 + 1, y1)]
+    for c in inside:
+        if t[c] != floor:
+            t[c] = floor
+    b.owner = ""
+    return inside
+
+
+def junk_house(level: Level, b, rng: random.Random) -> None:
+    from . import items
+    t = level.tiles
+    inside = strip(level, b, rng)
+    door = b.door
+    for c in inside:
+        if max(abs(c[0] - door[0]), abs(c[1] - door[1])) > 1 and rng.random() < JUNK_SHARE:
+            t[c] = T.JUNK
+    if rng.random() < 0.5:
+        for _ in range(rng.randint(1, 2)):
+            items.drop(level, *rng.choice(inside), rng.choice(JUNK_THINGS))
+    b.name = "an empty hovel, full of junk" if "hovel" in b.name else "an empty house, full of junk"
+
+
+def abandon(level: Level, b, rng: random.Random) -> None:
+    t = level.tiles
+    inside = strip(level, b, rng)
+    x0, y0, x1, y1 = b.x0, b.y0, b.x0 + b.w - 1, b.y0 + b.h - 1
+    t[b.door] = T.RUBBLE
+    for x in range(x0, x1 + 1):
+        for y in range(y0, y1 + 1):
+            edge = x in (x0, x1) or y in (y0, y1)
+            corner = x in (x0, x1) and y in (y0, y1)
+            if edge and not corner and t[x, y] in (T.WALL, T.STONE_WALL, T.TORCH) and rng.random() < 0.2:
+                t[x, y] = T.RUBBLE
+            elif t[x, y] == T.TORCH:
+                t[x, y] = T.STONE_WALL if t[x0, y0] == T.STONE_WALL else T.WALL
+    for c in inside:
+        r = rng.random()
+        if r < 0.3:
+            t[c] = T.RUBBLE                  # the roof's come down here
+        elif r < 0.4:
+            t[c] = T.JUNK
+    b.kind, b.name = "ruin", "an abandoned house"
+
+
 def build(level: Level, site, rng: random.Random, land=None) -> None:
     from . import cities
     if site.kind in ("city", "fort"):
@@ -630,7 +715,8 @@ def build(level: Level, site, rng: random.Random, land=None) -> None:
 
 # ----------------------------------------------------------------- levels above and below
 
-CAVE_DEPTHS = (1, 3)       # a cave goes this many levels down
+CAVE_DEPTHS = (3, 5)       # a cave goes this many levels down
+TOWN_PADDOCK = 0.5         # how often a town keeps horses (every inn does)
 TOWER_FLOORS = 2           # a room, then the roof
 
 
@@ -741,6 +827,8 @@ def cave_level(key: tuple, site, rng: random.Random) -> Level:
         down = far_tile(T.WALK[tiles], up)
         tiles[down] = T.STAIRS_DOWN
         level.exits[down] = (key[0], key[1], key[2], key[3] + 1)
+        from .ravines import carve_chasm
+        carve_chasm(level, rng, up, down)            # (some levels: a chasm down to the next)
     hide_chests(tiles, T.CAVE_FLOOR, rng, rng.randint(1, 2), avoid=list(level.exits))
     return level
 
@@ -819,5 +907,8 @@ def inn_cellar(key: tuple, site, rng: random.Random) -> Level:
 
 
 def sublevel(key: tuple, site, rng: random.Random) -> Level:
+    from .landmarks import dungeon_level, guard_lockup, guard_upstairs
+    from .ravines import ravine_level
     return {"cave": cave_level, "crypt": crypt_level, "tower": tower_floor, "inn_up": inn_upstairs,
-            "cellar": inn_cellar}[key[0]](key, site, rng)
+            "cellar": inn_cellar, "dungeon": dungeon_level, "guard_up": guard_upstairs,
+            "guard_cells": guard_lockup, "ravine": ravine_level}[key[0]](key, site, rng)

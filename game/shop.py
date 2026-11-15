@@ -12,6 +12,8 @@ PageUp/PageDown, Home/End or the mouse wheel move through it.
     and can sleep (z) in any of the beds up there.
   - An innkeeper serves hot soup, which warms you, and treats wolf fever (game/sickness.py).
   - A town's shopkeeper sells common weapons and armour, and buys trinkets and rings.
+  - In a city, a merchant at a stall sells everyday goods and buys trinkets; the alchemist
+    sells oils and candles and pays well for strange things out of the crypts.
   - A shop that buys as well as sells (the shopkeeper's, the blacksmith's) has two tabs: Buy
     and Sell. Left/Right, Tab or a click on a tab switches between them. A shop shows at most
     MOST_ROWS rows at a time, and scrolls past that.
@@ -186,7 +188,7 @@ class Modal:
         return self.act(engine)
 
     def note(self, text: str | None, engine) -> None:
-        if text:
+        if isinstance(text, str) and text:
             self.said = (self.said + [text])[-2:]
             engine.say(text)
 
@@ -311,6 +313,9 @@ class Shop(Tabs, Modal):
         paid = " and ".join(items.amount(k, v * n) for k, v in deal.pay.items())
         if deal.after == "soup":
             return f"You pay {paid} for a bowl of hot soup. " + engine.eat_soup()
+        if deal.after == "horse":
+            from . import horses
+            return f"You pay {paid}. " + horses.buy(engine)
         if deal.after == "room":
             engine.rent_room()
         got = " and ".join(items.amount(k, v * n) for k, v in deal.get.items())
@@ -475,8 +480,10 @@ def shopkeeper_deals(engine) -> list:
 
 
 SMITH_WARES = ["dagger", "spear", "mace", "short sword", "axe", "shovel", "iron helm", "mail shirt",
-               "iron-bound shield", "hobnailed boots", "climbing gear"]
-SCRAP = ["rusty dagger", "crude knife", "horseshoe", "iron nails", "iron rivets"]   # a smith buys these
+               "iron-bound shield", "hobnailed boots", "climbing gear", "lockpick", "pickaxe", "lantern",
+               "rope grapple"]
+SCRAP = ["rusty dagger", "crude knife", "horseshoe", "iron nails", "iron rivets",
+         "copper ore", "tin ore", "iron ore", "coal"]   # a smith buys these
 
 
 def smith_deals(engine) -> list:
@@ -490,6 +497,70 @@ def smith_deals(engine) -> list:
             deals.append(Deal(f"Sell your {items.KINDS[k].plural if bag.count(k) > 1 else k} ({bag.count(k)}): "
                               f"{value} coin{'s' if value > 1 else ''} each", {k: 1}, {"coin": value}, every=True))
     return deals
+
+
+MERCHANT_WARES = {"loaf of bread": 2, "apple": 1, "salt fish": 2, "roast meat": 4, "candle": 1, "wool blanket": 5,
+                  "coil of rope": 4, "flask of oil": 3, "whetstone": 3, "fishing net": 4, "spool of thread": 1,
+                  "bar of soap": 1, "clay cup": 1, "wooden spoon": 1, "pouch of salt": 2, "ball of twine": 1,
+                  "strip of cloth": 1, "pitch": 3, "animal fat": 2, "torch": 2}
+ALCHEMY = {"flask of oil": 3, "candle": 1, "black candle": 6, "vial of grave dust": 9, "bar of soap": 1}
+STRANGE = {"black candle": 4, "bone flute": 5, "rune-carved stone": 6, "tarnished amulet": 8, "vial of grave dust": 5,
+           "sealed scroll": 10, "silver reliquary": 15, "obsidian mirror": 12}   # what an alchemist pays for them
+
+
+def buy_deals(wares: dict) -> list:
+    return [Deal(f"Buy {items.amount(k, 1)}: {price} coin{'s' if price > 1 else ''}", {"coin": price}, {k: 1})
+            for k, price in wares.items()]
+
+
+def sell_deals(engine, prices: dict) -> list:
+    """What they'll buy of what you carry, at `prices` (kind -> coins each)."""
+    bag = engine.player.inventory
+    out = []
+    for k, value in prices.items():
+        if bag.count(k) and value:
+            name = items.KINDS[k].plural if bag.count(k) > 1 else items.KINDS[k].name
+            out.append(Deal(f"Sell your {name} ({bag.count(k)}): {value} coin{'s' if value > 1 else ''} each",
+                            {k: 1}, {"coin": value}, every=True))
+    return out
+
+
+def merchant_deals(name: str):
+    """A merchant's stall: a handful of everyday goods (each stall its own), and they buy
+    trinkets and rings like the shopkeeper does."""
+    import random
+    wares = dict(random.Random(name).sample(sorted(MERCHANT_WARES.items()), 6))
+    def make(engine) -> list:
+        trinkets = {k: items.KINDS[k].value for k in engine.player.inventory
+                    if k not in combat.WARES and k not in MERCHANT_WARES}
+        return buy_deals(wares) + sell_deals(engine, trinkets)
+    return make
+
+
+WEAVER_WARES = {"strip of cloth": 1, "linen shirt": 3, "wool shirt": 5, "wool hood": 4, "wool mittens": 3, "wool cloak": 6,
+                "wool blanket": 5, "spool of thread": 1}
+TAILOR_WARES = {"linen shirt": 3, "wool shirt": 5, "quilted underclothes": 10, "wool hood": 4, "fur hat": 5,
+                "wool cloak": 6, "fur cloak": 14, "wolfskin cloak": 16, "sheepskin coat": 14, "fur coat": 18,
+                "fur mittens": 5}
+PELT_PRICE = 3                 # what a tailor pays for a wolf pelt
+CLOAK_PELTS, CLOAK_FEE = 2, 4  # and what they ask to make you a wolfskin cloak
+
+
+def weaver_deals(engine) -> list:
+    return buy_deals(WEAVER_WARES)
+
+
+def tailor_deals(engine) -> list:
+    """Warm clothes of every kind; a wolfskin cloak made from your own pelts; and pelts bought."""
+    deals = buy_deals(TAILOR_WARES)
+    if engine.player.inventory.count("wolf pelt") >= CLOAK_PELTS:
+        deals.append(Deal(f"Make a wolfskin cloak from {CLOAK_PELTS} of your pelts: {CLOAK_FEE} coins",
+                          {"wolf pelt": CLOAK_PELTS, "coin": CLOAK_FEE}, {"wolfskin cloak": 1}))
+    return deals + sell_deals(engine, {"wolf pelt": PELT_PRICE})
+
+
+def alchemist_deals(engine) -> list:
+    return buy_deals(ALCHEMY) + sell_deals(engine, STRANGE)
 
 
 def for_actor(a, engine) -> Modal | None:
@@ -511,6 +582,23 @@ def for_actor(a, engine) -> Modal | None:
     elif a.kind == "carter":
         from . import carts
         return carts.ride_menu(a.name, engine)
+    elif a.kind == "merchant":
+        shop = Trader(f"{a.name}, the merchant", "Fresh goods, fair prices. And I'll buy any trinket you've got.",
+                      merchant_deals(a.name), buys=True)
+    elif a.kind == "alchemist":
+        shop = Trader(f"{a.name}, the alchemist", "Oils, candles and stranger things. I pay well for the strange.",
+                      alchemist_deals, buys=True)
+    elif a.kind == "stablehand":
+        from . import horses
+        shop = Shop(f"{a.name}, the stablehand", "Fine horses, all of them. And a saddle to go with one, if you need it.",
+                    [Deal(f"Buy a horse: {horses.HORSE_PRICE} coins", {"coin": horses.HORSE_PRICE}, {}, after="horse"),
+                     Deal(f"Buy a saddle: {horses.SADDLE_PRICE} coins", {"coin": horses.SADDLE_PRICE}, {"saddle": 1})])
+    elif a.kind == "weaver":
+        shop = Trader(f"{a.name}, the weaver", "Good wool makes good cloth, and good cloth keeps the cold out.",
+                      weaver_deals)
+    elif a.kind == "tailor":
+        shop = Trader(f"{a.name}, the tailor", "Warm things for cold roads. Bring me wolf pelts and I'll make you a cloak.",
+                      tailor_deals, buys=True)
     elif a.kind == "shopkeeper":
         shop = Trader(f"{a.name}, the shopkeeper", "Blades, armour, warm things, climbing gear. And I buy trinkets.",
                       shopkeeper_deals, buys=True)

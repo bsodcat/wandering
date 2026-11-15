@@ -18,6 +18,7 @@ CONTROLS = [
         ("e", "the use menu: what you can do here and next to you"),
         ("Left mouse", "the use menu for what's under the pointer"),
         ("q", "equipment: what you wear and wield"),
+        ("k", "crafting: campfires, torches, rope grapples"),
         ("i", "your inventory"),
         ("g", "pick up what's at your feet"),
         ("x", "dig, with a shovel"),
@@ -25,7 +26,6 @@ CONTROLS = [
     ("Looking", [
         ("Pointer", "describe what's under it (in the Info panel)"),
         ("o", "world map: overlays; local map: the relief"),
-        ("m", "world map: reveal it; local map: the whole map or only what you've seen"),
         ("v", "look at the treetops or the ground beneath them"),
         ("Tab", "the right panel's tabs: Info, Map, Log, Inv, hidden"),
         ("c", "show or hide the stats panel"),

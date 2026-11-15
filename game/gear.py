@@ -1,13 +1,15 @@
 """What you wear and carry on your body, and what each piece does for you.
 
-You have a weapon hand (game/combat.py) and seven places to wear things. One piece goes in each
+You have a weapon hand (game/combat.py) and eight places to wear things. One piece goes in each
 place, and the equipment menu (q) shows them all:
 
-    head      iron helm, leather cap, fur hat, straw hat
-    cloak     wool cloak, oilskin cloak, fur cloak
-    body      padded jerkin, leather coat, mail shirt, fur coat
+    head      iron helm, leather cap, fur hat, straw hat, wool hood
+    cloak     wool cloak, oilskin cloak, fur cloak, wolfskin cloak
+    body      padded jerkin, leather coat, mail shirt, fur coat, sheepskin coat
+    under     linen shirt, wool shirt, quilted underclothes (worn under whatever's on your body,
+              so a mail shirt needn't leave you cold)
     shield    wooden shield, iron-bound shield
-    hands     leather gloves, fur mittens
+    hands     leather gloves, fur mittens, wool mittens
     feet      leather boots, hobnailed boots, fur-lined boots
     harness   climbing gear
 
@@ -25,6 +27,11 @@ Climbing gear (a harness, rope and pitons) lets you climb onto boulders and rock
 are otherwise in the way, and up or down rises too steep to walk. On top of a rock you see over
 the land and over the rocks around you. Climbing is slow and hard work. Exhausted, you can't
 climb at all, and you can slip: less often with a good grip, more often in rain or in the dark.
+
+Where to get warm things: the armourer's in every town sells the fur and leather; in a city the
+weaver sells woollens and the tailor sells everything warm and buys wolf pelts. Skin a wolf you've
+killed (with a blade, from the use menu) for its pelt, and a tailor will make two pelts into a
+wolfskin cloak.
 """
 from __future__ import annotations
 
@@ -44,8 +51,8 @@ class Gear:
     climbing: bool = False
 
 
-SLOTS = ("head", "cloak", "body", "shield", "hands", "feet", "harness")
-SLOT_NAMES = {"head": "Head", "cloak": "Cloak", "body": "Body", "shield": "Shield", "hands": "Hands",
+SLOTS = ("head", "cloak", "body", "under", "shield", "hands", "feet", "harness")
+SLOT_NAMES = {"head": "Head", "cloak": "Cloak", "body": "Body", "under": "Under", "shield": "Shield", "hands": "Hands",
               "feet": "Feet", "harness": "Harness"}
 OLD_SLOTS = {"arm": "shield"}       # saved slots from before there was an equipment menu
 
@@ -55,21 +62,29 @@ GEAR = {
     "leather cap": Gear("head", warmth=1, cover=0.05),
     "fur hat": Gear("head", warmth=3),
     "straw hat": Gear("head", warmth=-2, cover=0.05),
+    "wool hood": Gear("head", warmth=2, cover=0.1),
     # cloak
     "wool cloak": Gear("cloak", warmth=3, cover=0.2),
     "oilskin cloak": Gear("cloak", warmth=1, cover=0.6),
     "fur cloak": Gear("cloak", warmth=5, cover=0.15, burden=0.05),
+    "wolfskin cloak": Gear("cloak", warmth=6, cover=0.25, burden=0.05),
     # body
     "padded jerkin": Gear("body", armour=1, warmth=2),
     "leather coat": Gear("body", armour=2, warmth=3, cover=0.1, burden=0.05),
     "mail shirt": Gear("body", armour=3, warmth=-1, burden=0.3),
     "fur coat": Gear("body", armour=1, warmth=8, burden=0.1),
+    "sheepskin coat": Gear("body", armour=1, warmth=6, cover=0.1, burden=0.05),
+    # under (beneath the body piece)
+    "linen shirt": Gear("under", warmth=1),
+    "wool shirt": Gear("under", warmth=3),
+    "quilted underclothes": Gear("under", warmth=5, burden=0.05),
     # shield
     "wooden shield": Gear("shield", block=1 / 6, burden=0.05),
     "iron-bound shield": Gear("shield", armour=1, block=0.25, burden=0.15),
     # hands
     "leather gloves": Gear("hands", warmth=1, grip=0.06),
     "fur mittens": Gear("hands", warmth=3, grip=-0.08),
+    "wool mittens": Gear("hands", warmth=2, grip=-0.04),
     # feet
     "leather boots": Gear("feet", warmth=1, footing=0.1),
     "hobnailed boots": Gear("feet", footing=0.2, grip=0.04, burden=0.05),

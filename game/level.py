@@ -77,6 +77,13 @@ class Level:
     mud: dict = field(default_factory=dict)            # (x, y) -> the tile it'll be again once the mud dries
     silt: dict = field(default_factory=dict)           # (x, y) -> [what the silt buried, when it was laid]
     footprint: np.ndarray | None = None                # a floor above the ground: the tiles that are floor
+    thieves: int = 0                                   # a city's thieves, kept up to this many (citylife.py)
+    unlocked: set = field(default_factory=set)         # (x, y) of doors and chests whose locks you've picked
+    campfires: dict = field(default_factory=dict)      # (x, y) -> the minute it burns out (game/crafting.py)
+    ore: dict = field(default_factory=dict)            # (x, y) -> what an ore vein there gives (game/mining.py)
+    way_up: tuple | None = None                        # a ravine: (level key, (x, y)) the grapple brings you out at
+    crime_day: int = -1                                # the day thieves were last counted
+    arrests: int = 0                                   # thieves the guards have caught here
     over: tuple | None = field(default=None, repr=False)   # (ground key, dx, dy): what lies under it (engine.py)
 
     def __post_init__(self):

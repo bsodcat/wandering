@@ -12,15 +12,16 @@ import tcod
 from . import biomes as B
 from . import combat
 from . import gear
+from . import lights
 from . import items
 from . import sickness
 from . import tiles as T
 from . import trees
-from .climate import clock_text, date_text, describe_wind, time_of_day
+from .climate import clock_text, day_text, describe_wind, season_text, time_of_day
 from .elevation import LEVEL_M
 from .engine import OVERLAYS, Engine
 from .player import NORMAL, body_status, chill_status, feels_like, insulation, stamina_status, wet_status
-from .ui import LEFT_HIDE, LEFT_SHOW, LEFT_W, RIGHT_W, STRIP_H, TAB_NAMES
+from .ui import EIGHTHS, FRAME, LEFT_HIDE, LEFT_SHOW, LEFT_W, NIGHT_SKY, RIGHT_W, SKY, STRIP_H, TAB_NAMES
 
 TEXT, DIM, TITLE = (220, 220, 220), (130, 130, 130), (255, 220, 120)
 PANEL_BG, HEADER_BG, BORDER = (14, 14, 20), (32, 32, 44), (70, 70, 85)
@@ -43,9 +44,13 @@ class Writer:
         self.y += n
 
     def bar(self, value: float, top: float, colour) -> None:
-        filled = int(round(self.width * max(0.0, min(1.0, value / top))))
-        self.console.print(self.x, self.y, "█" * filled, fg=colour)
-        self.console.print(self.x + filled, self.y, "░" * (self.width - filled), fg=EMPTY_BAR)
+        """A bar filled to value/top, its end to the eighth of a cell (▏▎▍▌▋▊▉), over a shaded track."""
+        eighths = int(round(self.width * 8 * max(0.0, min(1.0, value / top))))
+        whole, part = divmod(eighths, 8)
+        self.console.print(self.x, self.y, "░" * self.width, fg=EMPTY_BAR)
+        self.console.print(self.x, self.y, "█" * whole, fg=colour)
+        if part and whole < self.width:
+            self.console.print(self.x + whole, self.y, EIGHTHS[part], fg=colour, bg=PANEL_BG)
         self.y += 1
 
     def gauge(self, value: float, low: float, high: float, mark, colour) -> None:
@@ -57,6 +62,13 @@ class Writer:
         self.console.print(self.x, self.y, "".join(cells), fg=EMPTY_BAR)
         self.console.print(self.x + pos, self.y, "█", fg=colour)
         self.y += 1
+
+
+def sky(c) -> str:
+    """The weather as one glyph: the sun (or a clear night's moon), cloud, fog, rain, storm, snow."""
+    if c.kind == "Clear" and c.light < 0.25:
+        return NIGHT_SKY
+    return SKY.get(c.kind, "·")
 
 
 def panel(console, x: int, width: int, border_x: int) -> None:
@@ -126,6 +138,12 @@ def draw_stats(console, e: Engine) -> None:
         w.line(f"{label:<8}{v:5.0f}  {status(p)}"[: w.width])
         w.bar(v, top, colour)
         w.gap()
+    if e.mount is not None:
+        w.line(f"Riding {e.mount.name}", (220, 180, 120))
+    lit = lights.status(p)
+    if lit:
+        w.line(lit, (240, 200, 110))
+        w.gap()
     w.line(f"Warmth  {p.body:5.1f}°C")
     w.gauge(p.body, 33.0, 41.0, NORMAL, warmth_colour(p.body))
     w.line(f"{'cold':<{w.width // 2}}{'hot':>{w.width - w.width // 2}}", EMPTY_BAR)
@@ -163,7 +181,8 @@ def draw_stats(console, e: Engine) -> None:
 def draw_info(console, e: Engine, look: list[str]) -> None:
     p, wd, c = e.player, e.world, e.now
     w = Writer(console, e.panels.right_x + 2, 2, RIGHT_W - 3)
-    w.line(date_text(e.minutes), TITLE)
+    w.line(day_text(e.minutes, e.lat), TITLE)
+    w.line(season_text(e.minutes, e.lat))
     w.line(f"{clock_text(e.minutes)}  {time_of_day(e.lat, e.minutes)}")
     w.gap()
     site = e.site
@@ -182,9 +201,9 @@ def draw_info(console, e: Engine, look: list[str]) -> None:
     w.gap()
     if e.indoors and e.level is not None:
         w.line(f"Outside {c.air:5.1f}°C")
-        w.line("Underground" if e.underground else f"{c.kind} outside", DIM)
+        w.line("Underground" if e.underground else f"{sky(c)} {c.kind} outside", DIM)
     else:
-        w.line(f"Air   {c.air:5.1f}°C  {c.kind}")
+        w.line(f"Air   {c.air:5.1f}°C  {sky(c)} {c.kind}")
         w.line(f"{describe_wind(c.wind)} {c.wind:.0f} km/h", DIM)
     if e.level is None:
         w.line(f"Overlay {OVERLAYS[e.overlay]}{'  revealed' if e.reveal else ''}", DIM)
@@ -198,14 +217,13 @@ def draw_info(console, e: Engine, look: list[str]) -> None:
             w.line(text, DIM)
     if e.level is None:
         keys = ("arrows/numpad/wasd  go", "> Enter  go into region", ". or 5   wait an hour",
-                "z        rest 8 hours", "o        overlays", "m        reveal map")
+                "z        rest 8 hours", "o        overlays")
     else:
         keys = ("arrows/numpad/wasd  go", "> <      stairs down/up", "<        (no stairs) map",
                 f"v        {'ground' if e.treetops else 'treetops'} view", ". or 5   wait an hour",
                 "z        rest / sleep", "g x      pick up, dig", "i        inventory",
-                "e        use menu", "q        equipment", "bump     fight",
-                f"o        {'normal' if e.relief else 'relief'} view",
-                f"m        {'only seen' if e.reveal_local else 'whole map'}")
+                "e        use menu", "q        equipment", "k        crafting", "bump     fight",
+                f"o        {'normal' if e.relief else 'relief'} view")
     keys += ("mouse    L use, R walk", "Tab      panel tabs", "c        stats panel", "F11      fullscreen", "Esc      menu, options")
     w.y = max(w.y + 1, console.height - len(keys) - 1)
     for text in keys + (f"Seed {wd.seed}",):
@@ -429,7 +447,7 @@ def draw_shop(console: tcod.console.Console, e: Engine) -> None:
     console.rgb["fg"] = (console.rgb["fg"] * 0.4).astype(np.uint8)
     console.rgb["bg"] = (console.rgb["bg"] * 0.4).astype(np.uint8)
     x, y, w, h = shop.box()
-    console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
+    console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG, decoration=FRAME)
     title = f" {shop.title[: w - 4]} "
     console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
     top = y + 1
@@ -480,7 +498,7 @@ def draw_menu(console: tcod.console.Console, menu) -> None:
         return
     items = menu.items()
     x, y, w, h = box(len(items), console.width, console.height)
-    console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
+    console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG, decoration=FRAME)
     title = {"pause": " Paused ", "timeskip": " Time skip "}.get(menu.screen, " Options ")
     console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
     left, right = value_span(len(items), console.width, console.height)
@@ -512,7 +530,7 @@ def draw_controls(console: tcod.console.Console, menu) -> None:
     w = min(console.width - 4, CONTROLS_W)
     h = console.height - 4
     x, y = (console.width - w) // 2, 2
-    console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG)
+    console.draw_frame(x, y, w, h, fg=BORDER, bg=PANEL_BG, decoration=FRAME)
     title = " Controls "
     console.print(x + (w - len(title)) // 2, y, title, fg=TITLE, bg=PANEL_BG)
     lines = menu.controls_lines()

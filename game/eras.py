@@ -131,7 +131,7 @@ def survivors(old, years: int) -> list:
         if s.kind not in KEPT:
             continue
         if s.kind in ("ruins", "cave") or rng.random() < lasts:
-            out.append(Site(s.kind, s.name, s.x, s.y, s.port))
+            out.append(Site(s.kind, s.name, s.x, s.y, s.port, tuple(s.span), getattr(s, "ward", "")))
         else:
             out.append(Site("ruins", s.name if s.name.startswith("Ruins of ") else f"Ruins of {s.name}", s.x, s.y))
     return out

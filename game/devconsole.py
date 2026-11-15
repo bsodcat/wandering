@@ -307,7 +307,7 @@ class DevConsole:
         from .climate import clock_text, date_text
         e = self.engine
         if not args:
-            return f"{date_text(e.minutes)}, {clock_text(e.minutes)}" + ("  (paused)" if e.paused else "")
+            return f"{date_text(e.minutes, e.lat)}, {clock_text(e.minutes)}" + ("  (paused)" if e.paused else "")
         what = args[0].lower()
         if what in ("pause", "stop", "freeze"):
             e.paused = True

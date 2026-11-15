@@ -26,6 +26,11 @@ from tcod.event import KeySym
 
 SCREEN_W, SCREEN_H = 120, 45          # the screen at its default size (1200 x 900 pixels: 4:3)
 MIN_W, MIN_H = 80, 30                 # the smallest screen the panels still fit on
+FRAME = "╭─╮│ │╰─╯"                 # boxes have rounded corners (square in a font without them)
+EIGHTHS = " ▏▎▍▌▋▊▉█"                 # a cell filled 0..8 eighths from the left, for smooth bars
+SKY = {"Clear": "☀", "Cloudy": "☁", "Overcast": "☁", "Fog": "≋", "Rain": "☂", "Storm": "☇",
+       "Snow": "*", "Blizzard": "*"}   # the weather at a glance; a clear night shows the moon
+NIGHT_SKY = "☽"
 LEFT_W = 24                           # columns of the stats panel, border included
 RIGHT_W = 28                          # columns of the right panel, border included
 RIGHT_X = SCREEN_W - RIGHT_W          # where the right panel starts on a default-sized screen

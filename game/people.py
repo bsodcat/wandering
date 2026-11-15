@@ -7,9 +7,17 @@ Each settlement is populated when its map is built:
             water to fish and woods to cut
 - villages: farmers for the fields, and a fisherman and a lumberjack in the same way
 - inns:     an innkeeper, and a barkeeper who lets the rooms upstairs for the night
+- every house in a town or village has someone living in it (townsfolk, if there aren't
+  tradespeople enough); in a city, the houses nobody lives in are empty and full of junk,
+  and some cities have abandoned houses, fallen in (structures.empty_houses)
 - cities:   each part has the trades that are in it (game/cities.py), a blacksmith at a
-            smithy, guards at the gates and archers on the walls
-- forts:    four guards and three archers, who sleep in the barracks, and a blacksmith
+            smithy, archers on the walls, and a crowd of its own: craftsfolk working from
+            their houses, townsfolk out and about, beggars, merchants at the stalls, thieves,
+            and guards at the gates and crossings, more of them the more thieves there are;
+            the keep's king or prince, their queen or concubine and the court
+            (game/citylife.py)
+- forts:    four guards and three archers, who sleep in the barracks, and a blacksmith (a
+            city's watch fort: three guards and two archers)
 - carters:  beside a cart while it's in town (game/carts.py); they'll take you to a near town
 - animals:  a herd in each pasture (what suits the land, see farming.py), and hens about
             the houses; and in a town, a dog or a cat that follows you about if you're near
@@ -33,10 +41,19 @@ Everyone lives in a house (the innkeeper at the inn) and keeps hours:
     archer       07:00-19:00  on the walls, shooting what comes near
     blacksmith   07:00-18:00  at the forge; sells iron goods, buys old iron
 
+Some keep other hours: a guard on the night watch, or anyone with a `shift` of their own.
+Someone with a `routine` (the court) follows it hour by hour, and someone with `haunts` and
+no trade (a city's townsfolk) wanders from one to another of them, a different one every
+HAUNT_MINUTES or so, at times of their own.
+
 They walk where they're going a tile at a time as the clock runs, a little under a minute a
 tile, wander about while they work, and step round each other and you. If you've been away a
 while (or rested), everyone is simply where they'd be by now. Animals amble about their
 pasture; hens peck about the houses.
+
+An inn holds INN_CROWD people at most, its innkeeper and barkeeper among them. Whoever's
+already inside keeps their place; others who'd have gone there walk the streets (in a city)
+or go to the green instead, or home if it's late.
 
 Walk into someone and you talk (the first time, they say who they are), and you step past
 each other. Walk into an animal and you push past it.
@@ -50,7 +67,7 @@ import numpy as np
 import tcod
 
 from . import tiles as T
-from .climate import hour_of_day
+from .climate import hour_of_day, weekday
 from . import items
 from .farming import ANIMALS, PETS, STAGE_WORDS
 
@@ -61,6 +78,9 @@ MOST_STEPS = 60               # steps anyone takes in one go
 FOLLOW = 12                   # a pet follows you if you're this close (columns on screen)
 HEEL = 2                      # and stays about this far away
 BEDTIME = 21
+HAUNT_MINUTES = 40            # how long someone with no trade lingers in one place
+INN_CROWD = 8                 # people in an inn at once, at most, the innkeeper and barkeeper among them
+ROYAL = ("king", "prince", "queen", "concubine")
 
 
 @dataclass(frozen=True)
@@ -91,6 +111,9 @@ JOBS = {
     "innkeeper": Job((240, 190, 80), 7, 21, "keeping the inn",
                      ("Welcome to {inn}! Warm fire, soft beds.", "Rooms are upstairs; see the barkeeper.",
                       "Travellers bring the best stories.", "Wipe your boots, please.")),
+    "stablehand": Job((190, 160, 110), 6, 20, "tending the horses",
+                      ("A good horse is worth its keep.", "Mind her back legs.", "Saddles are extra.",
+                       "They'll carry you twice as fast as your feet, and never complain.")),
     "shopkeeper": Job((190, 195, 215), 8, 18, "minding the shop",
                       ("Good steel, fair prices.", "Wolves about? You'll want a spear.",
                        "Dig anything up, bring it here. I pay fair.", "Mail's dear, but so's your hide.")),
@@ -109,9 +132,100 @@ JOBS = {
     "carter": Job((205, 175, 120), 0, 24, "seeing to the cart",
                   ("The road's long, but the cart's quicker than your feet.", "Hop on, if you've the coin.",
                    "Mind the wheel.", "Weather's good for the road.")),
+    # a stone city's people (game/citylife.py)
+    "townsperson": Job((185, 180, 165), 8, 20, "out and about",
+                       ("Busy today, isn't it?", "Mind your purse in the market.", "Have you seen the keep? Grand.",
+                        "They hanged a horse thief last spring.", "The ale at {inn} is the best in {town}.")),
+    "beggar": Job((140, 130, 115), 7, 21, "begging for coins",
+                  ("Spare a coin?", "Bless you, traveller.", "I was a soldier once.", "Cold nights, these.")),
+    "thief": Job((185, 180, 165), 10, 26, "loitering",
+                 ("Nice boots.", "Lovely day for it.", "Never seen you before.", "Guards everywhere today.")),
+    "weaver": Job((175, 150, 205), 7, 17, "at the loom",
+                  ("Good wool makes good cloth.", "The loom never sleeps, nor do I.", "Mind the thread.")),
+    "tailor": Job((205, 155, 175), 8, 18, "stitching a coat",
+                  ("Measure twice, cut once.", "That cloak's seen better days.", "Silk's dear this year.")),
+    "potter": Job((195, 135, 95), 7, 16, "at the wheel",
+                  ("Clay from the river's the best.", "Cracked another one. Oh well.", "Everyone needs a pot.")),
+    "chandler": Job((235, 220, 160), 7, 17, "dipping candles",
+                    ("Tallow or wax?", "The temple buys my best candles.", "Long nights mean good trade.")),
+    "cooper": Job((175, 125, 75), 7, 17, "hooping a barrel",
+                  ("A good barrel keeps for years.", "The inns can't get enough of them.", "Oak, always oak.")),
+    "cobbler": Job((160, 120, 90), 8, 18, "mending boots",
+                   ("Those boots have walked a long way.", "Good soles, good roads.", "Hobnails? Ask the smith.")),
+    "scribe": Job((200, 200, 225), 8, 18, "copying letters",
+                  ("Ink and patience.", "I write for those who can't.", "The library's books are the king's.")),
+    "carpenter": Job((190, 150, 95), 7, 17, "sawing planks",
+                     ("Stone's for walls; wood's for living.", "Measure the beam twice.", "Splinters. Always splinters.")),
+    "merchant": Job((225, 195, 120), 8, 18, "minding the stall",
+                    ("Fresh from the coast!", "Best prices in {town}, I swear it.", "Buy two, I'll throw in a third.",
+                     "Got anything to sell? I'm always buying trinkets.")),
+    "guildmaster": Job((230, 200, 150), 9, 17, "keeping the guild's books",
+                       ("The guild sets fair prices. Mostly.", "Every trade in {town} pays its dues.")),
+    "alchemist": Job((150, 225, 190), 9, 19, "brewing something that smokes",
+                     ("Don't touch that.", "Grave dust has its uses.", "One day: gold. One day.",
+                      "The fumes? You get used to them.")),
+    "priest": Job((240, 235, 200), 6, 20, "tending the altar",
+                  ("Peace be with you.", "The gods see all, even in {town}.", "Light a candle for the dead.")),
+    "bard": Job((215, 160, 230), 16, 23, "singing on the stage",
+                ("A song for a coin?", "Have you heard the one about the drowned king?", "Tonight: a new ballad!")),
+    "mummer": Job((230, 140, 170), 16, 23, "playing on the stage",
+                  ("Tonight we play the fall of the old kings.", "I'm the villain. I always am.", "Boo me, I dare you.")),
+    "pit fighter": Job((215, 110, 90), 14, 21, "fighting in the pit",
+                       ("Fancy your chances?", "Two broken ribs last week. Still standing.", "Bet on me.")),
+    "hangman": Job((120, 110, 110), 10, 16, "seeing to the gallows",
+                   ("Nobody likes me. Nobody likes the work.", "The rope's always ready.", "Keep your nose clean.")),
+    "king": Job((255, 215, 90), 9, 12, "holding court",
+                ("You stand before the throne of {town}.", "My guards keep the peace. Mostly.",
+                 "Thieves, thieves, everywhere thieves.", "You may go.")),
+    "prince": Job((250, 200, 120), 9, 12, "holding court",
+                  ("My father ruled well. I mean to rule better.", "Speak quickly; the court is waiting.",
+                   "{town} prospers, thank the gods.")),
+    "queen": Job((235, 170, 215), 10, 12, "at court",
+                 ("Welcome to {town}, traveller.", "The library is my refuge.", "Do mind the guards; they're jumpy.")),
+    "concubine": Job((240, 160, 190), 10, 12, "at court",
+                     ("The court whispers. Don't listen.", "Have you come far?", "The gardens are lovely at dusk.")),
+    "cook": Job((235, 200, 160), 5, 20, "cooking for the court",
+                ("Out of my kitchen!", "Roast boar again tonight.", "The king likes his pies hot.")),
+    "librarian": Job((185, 175, 230), 8, 19, "copying a manuscript",
+                     ("Quiet, please.", "Some of these books are older than the walls.", "Don't bend the spines.")),
+    "servant": Job((200, 190, 170), 6, 21, "waiting on the court",
+                   ("Begging your pardon.", "Busy, busy.", "The queen wants her wine warmed.")),
+    "sergeant": Job((210, 205, 190), 6, 22, "going over the watch rolls",
+                    ("The watch never sleeps. Well, half of it doesn't.", "Seen any thieves? Tell the guards.",
+                     "Mind the racks; those blades are sharp.", "The night watch is short again.")),
+    "gaoler": Job((150, 140, 130), 0, 24, "keeping the cells",
+                  ("No visitors without leave.", "Quiet down there!", "They all say they're innocent.")),
+    "prisoner": Job((150, 150, 140), 0, 24, "sitting in a cell",
+                    ("I didn't do it!", "Got any bread?", "They'll hang me, sure as rain.", "Get me out of here.")),
 }
+CRAFTS = ("weaver", "tailor", "potter", "chandler", "cooper", "cobbler", "scribe", "carpenter")
+JOBS.update({
+    "homemaker": Job((215, 185, 160), 6, 21, "keeping house",
+                     ("Supper's on the fire.", "Wipe your feet!", "My other half works all hours.",
+                      "Bread's rising. Don't slam the door.")),
+    "child": Job((240, 220, 140), 8, 19, "playing tag",
+                 ("You're it!", "Can't catch me!", "My mam says not to talk to strangers.", "Are you a knight?")),
+    "priest": Job((240, 235, 200), 6, 20, "tending the altar",
+                  ("Peace be with you.", "The gods see all, even in {town}.", "Light a candle for the dead.",
+                   "Come on Sunday: the service is at nine.")),
+    "labourer": Job((170, 150, 120), 6, 18, "hauling loads",
+                    ("Back's not what it was.", "A day's work for a day's bread.", "Mind your feet, I'm carrying.")),
+    "washerwoman": Job((190, 200, 215), 6, 16, "washing clothes",
+                       ("These won't wash themselves.", "Lye's hard on the hands.", "The river's cold today.")),
+    "ratcatcher": Job((135, 125, 105), 18, 26, "hunting rats",
+                      ("Big ones in the cellars this year.", "A copper a tail.", "Don't ask what's in the sack.")),
+})
 ROOM_PRICE = 8                # coins for a night upstairs at an inn
-EVENING = {"inn": "at {inn}", "green": "chatting on the green"}
+EVENING = {"inn": "at {inn}", "green": "chatting on the green", "home": "at supper at home"}
+SERVICE = (9, 11)             # the hours of the Sunday service, at a city's temple or chapel
+CHURCHGOING = 1.0             # hours before it they set off
+CHURCH_WALK = 110             # tiles away at most, the churchgoers
+WORSHIP = {"townsperson", "homemaker", "child", "merchant", "baker", "butcher", "shopkeeper", "blacksmith",
+           "labourer", "washerwoman", "guildmaster", "alchemist", "servant", "cook", "librarian", "beggar",
+           "bard", "mummer", "pit fighter", "hangman", "king", "prince", "queen", "concubine"}   # (and the crafts)
+SPOUSE = 0.45                 # how often someone with a house of their own is married, with a homemaker at home
+WORSHIP |= set(CRAFTS)
+
 FIRST = ["Alder", "Bryn", "Cora", "Dale", "Edda", "Finn", "Greta", "Hal", "Ida", "Jory", "Kit", "Lena",
          "Milo", "Nell", "Oren", "Pia", "Quin", "Rhea", "Sol", "Tamsin", "Ulf", "Vera", "Wyn", "Yara",
          "Bram", "Elin", "Garth", "Maud", "Rowan", "Signe"]
@@ -136,6 +250,17 @@ class Actor:
     stuck: int = 0
     doing: str = ""
     met: bool = False
+    shift: tuple | None = None      # (start, end) hours of work, if not their trade's (end past 24: overnight)
+    routine: list = field(default_factory=list)    # (from, to, doing, tiles): an hour-by-hour day (the court)
+    haunts: list = field(default_factory=list)     # (doing, tiles, "day" or "evening"): where an idler goes
+    seed: int = 0                   # for an idler's comings and goings
+    chase: object = None            # a guard: the thief they're after (game/citylife.py)
+    fleeing: float | None = None    # a thief: running from the guards till this minute
+    exposed: bool = False           # a thief: seen at it, so known for what they are
+    loot: int = 0                   # a thief: coins taken
+    friends: list = field(default_factory=list)    # a child: the others they play with (them too)
+    it: bool = False                # a child: "it", in a game of tag
+    saddled: bool = False           # a horse: saddled, ready to ride (game/horses.py)
 
     @property
     def animal(self) -> bool:
@@ -150,10 +275,21 @@ class Actor:
         return ANIMALS[self.kind].colour if self.animal else JOBS[self.kind].colour
 
     @property
+    def shown_kind(self) -> str:
+        """What they look like: a thief passes for a townsperson until they're seen at it."""
+        return "townsperson" if self.kind == "thief" and not self.exposed else self.kind
+
+    @property
     def title(self) -> str:
         if self.kind in PETS:
             return f"{self.name}, the town {self.kind}"
-        return f"A {self.kind}" if self.animal else f"{self.name}, the {self.kind}"
+        if self.animal:
+            return f"A {self.kind}"
+        if self.kind == "concubine":
+            return f"{self.name}, the royal concubine"
+        if self.kind in ROYAL:
+            return f"{self.kind.capitalize()} {self.name}"
+        return f"{self.name}, the {self.shown_kind}"
 
 
 # ----------------------------------------------------------------- populating a settlement
@@ -173,10 +309,11 @@ def populate(level, site, rng: random.Random) -> None:
     gates = [p for p in level.places if p.kind == "gate"]
     walls = [p for p in level.places if p.kind == "walls"]
     if site.kind == "fort":
-        jobs = ["guard"] * 4 + ["archer"] * 3 + ["blacksmith"] * bool(smithy)
-    elif site.kind == "city":
+        watch = bool(getattr(site, "ward", ""))
+        jobs = ["guard"] * (3 if watch else 4) + ["archer"] * (2 if watch else 3) + ["blacksmith"] * bool(smithy)
+    elif site.kind == "city":               # the guards and everyone else: game/citylife.py
         jobs = ["baker", "butcher", "innkeeper", "barkeeper", "shopkeeper"] + ["blacksmith"] * bool(smithy) \
-            + ["guard"] * min(4, 2 * len(gates)) + ["archer"] * min(2, len(walls))
+            + ["archer"] * min(2, len(walls))
     elif site.kind == "town":
         jobs = ["baker", "butcher", "innkeeper", "barkeeper", "shopkeeper"] + ["farmer"] * min(2, len(fields_))
     elif site.kind == "village":
@@ -185,6 +322,9 @@ def populate(level, site, rng: random.Random) -> None:
         jobs = ["innkeeper", "barkeeper"]
     if site.kind in ("town", "village"):
         jobs += ["fisherman"] * bool(water) + ["lumberjack"] * bool(camp)
+    paddock = next((p for p in level.places if p.kind == "pasture" and p.animal == "horse"), None)
+    if paddock is not None:
+        jobs += ["stablehand"]
     green = settle_green(level)
     evening, evening_kind = (inn.floor(t), "inn") if inn else (green, "green")
     used_names = set()
@@ -200,6 +340,8 @@ def populate(level, site, rng: random.Random) -> None:
             floor = [c for c in inn.floor(t) if t[c] not in (T.STAIRS_UP, T.STAIRS_DOWN)]
             home = [c for c in floor if any(t[c[0] + dx, c[1] + dy] == near
                                             for dx in (-1, 0, 1) for dy in (-1, 0, 1))] or floor
+        elif job == "stablehand" and paddock is not None and not houses:   # sleeps in the hay by the paddock
+            home = paddock.tiles
         elif job in ("guard", "archer") and barracks:      # soldiers sleep in the barracks
             home = [c for b in barracks for c in b.floor(t) if t[c] == T.BED] or barracks[0].floor(t)
         elif houses:
@@ -213,14 +355,20 @@ def populate(level, site, rng: random.Random) -> None:
         if not work or not home:
             continue
         x, y = work[0]
-        level.actors.append(Actor(job, name, x, y, home=home, work=work, evening=evening or green,
-                                  evening_kind=evening_kind if evening else "green"))
+        worker = Actor(job, name, x, y, home=home, work=work, evening=evening or green,
+                       evening_kind=evening_kind if evening else "green")
+        level.actors.append(worker)
+        if house is not None and rng.random() < SPOUSE:
+            marry(level, rng, used_names, worker, house)
         if job == "lumberjack":
             if house is not None:
                 lean_axe(level, house)
             else:                         # no house of their own: the axe is left at the camp
                 spot = next((c for c in work if not T.ROOF[t[c]]), work[0])
                 items.drop(level, *spot, "axe")
+    if site.kind == "city":
+        from . import citylife
+        citylife.populate(level, site, rng, used_names, evening or green, evening_kind if evening else "green")
     for place in (p for p in level.places if p.kind == "pasture"):
         for _ in range(rng.randint(3, 6) if place.animal != "horse" else 2):
             x, y = rng.choice(place.tiles)
@@ -234,10 +382,48 @@ def populate(level, site, rng: random.Random) -> None:
             pet = rng.choice(PETS)
             x, y = rng.choice(yard)
             level.actors.append(Actor(pet, rng.choice(PET_NAMES[pet]), x, y, work=yard))
+    if site.kind in ("town", "village"):               # someone in every house
+        for house in houses:
+            name = person_name(rng, used_names)
+            house.name, house.owner = f"the {name.split()[1]} house", "townsperson"
+            inside = house.floor(t)
+            beds = [c for c in inside if t[c] == T.BED] or inside
+            haunts = [("chatting on the green", green, "any"), ("at home", inside, "day")]
+            if inn is not None:
+                haunts.append(("at {inn}", inn.floor(t), "evening"))
+            level.actors.append(Actor("townsperson", name, *rng.choice(inside), home=beds, work=inside,
+                                      evening=evening or green, haunts=haunts,
+                                      shift=(rng.randint(6, 9), rng.randint(20, 23)), seed=rng.randrange(1 << 30)))
+        houses.clear()
     if site.kind in ("city", "town", "village"):
+        from .structures import empty_houses
+        empty_houses(level, site, rng)
         rooms = [c for b in level.buildings if b.kind == "house" for c in b.floor(t) if t[c] in (T.WOOD_FLOOR, T.STONE_FLOOR)]
         if rooms:
             items.drop(level, *rng.choice(rooms), "shovel")
+
+
+def marry(level, rng: random.Random, used: set, worker: Actor, house) -> Actor:
+    """A husband or wife for someone with a house: they keep house and cook for them, and the
+    worker comes home for supper of an evening."""
+    t = level.tiles
+    inside = house.floor(t)
+    family = worker.name.split()[-1]
+    for _ in range(30):
+        name = f"{rng.choice(FIRST)} {family}"
+        if name not in used and name != worker.name:
+            break
+    used.add(name)
+    kitchen = [c for c in inside if any(level.in_bounds(c[0] + dx, c[1] + dy) and t[c[0] + dx, c[1] + dy]
+                                        in (T.HEARTH, T.TABLE) for dx in (-1, 0, 1) for dy in (-1, 0, 1))] or inside
+    to = worker.name.split()[0]
+    spouse = Actor("homemaker", name, *rng.choice(inside), home=worker.home, work=kitchen, evening=inside,
+                   routine=[(6, 8, f"cooking breakfast for {to}", kitchen), (8, 11, "keeping house", inside),
+                            (11, 13, f"cooking dinner for {to}", kitchen), (13, 16, "mending by the fire", kitchen),
+                            (16, 19, f"preparing supper for {to}", kitchen), (19, 21, f"at supper with {to}", inside)])
+    level.actors.append(spouse)
+    worker.evening, worker.evening_kind = inside, "home"
+    return spouse
 
 
 PET_NAMES = {"dog": ["Biscuit", "Rufus", "Bramble", "Patch", "Scout", "Moss"],
@@ -277,6 +463,14 @@ def workplace(level, job: str, i: int, fields_, water, camp, buildings, gates=()
         return water[0].tiles if water else []
     if job == "lumberjack":
         return camp.tiles if camp else []
+    if job == "stablehand":
+        place = next((p for p in level.places if p.kind == "pasture" and p.animal == "horse"), None)
+        if place is None:
+            return []
+        xs, ys = [c[0] for c in place.tiles], [c[1] for c in place.tiles]     # by the paddock fence
+        ring = [(x, y) for x in range(min(xs) - 2, max(xs) + 3) for y in range(min(ys) - 2, max(ys) + 3)
+                if level.walkable(x, y) and (x, y) not in place.tiles and not T.ROOF[t[x, y]]]
+        return ring or place.tiles
     kind = {"baker": "bakery", "butcher": "butcher", "innkeeper": "inn", "barkeeper": "inn",
             "shopkeeper": "armoury", "blacksmith": "smithy"}.get(job)
     if kind is None:
@@ -312,6 +506,23 @@ def settle_yard(level) -> list:
 
 # ----------------------------------------------------------------- the day
 
+def hours(a: Actor) -> tuple[int, int]:
+    """(start, end) of their work; an end past 24 runs on past midnight."""
+    return a.shift or (JOBS[a.kind].start, JOBS[a.kind].end)
+
+
+def within(hour: float, start: float, end: float) -> bool:
+    return start <= hour < end or start <= hour + 24 < end
+
+
+def on_duty(a: Actor, minutes: float) -> bool:
+    """Whether someone's at work at this time."""
+    if a.animal:
+        return False
+    start, end = hours(a)
+    return within(float(hour_of_day(minutes)), start, end)
+
+
 def plan(a: Actor, hour: float, names: dict) -> tuple[list, str]:
     """(where they should be, what they're doing) at this hour."""
     if a.animal:
@@ -321,21 +532,118 @@ def plan(a: Actor, hour: float, names: dict) -> tuple[list, str]:
             awake = "nosing about" if a.kind == "dog" else "watching everything"
             return a.work, awake if 6 <= hour < 21 else "curled up asleep"
         return a.work, "grazing" if 6 <= hour < 20 else "resting"
+    if a.routine:
+        for start, end, doing, tiles in a.routine:
+            if within(hour, start, end) and tiles:
+                return tiles, doing.format(**names)
+        return a.home, "asleep" if hour >= BEDTIME + 1 or hour < 6 else "in their chambers"
+    start, end = hours(a)
+    if a.haunts:
+        if within(hour, start, end):
+            return haunt(a, hour, names)
+        return a.home, "asleep" if not within(hour, end - 1, end + 1) else "at home"
     job = JOBS[a.kind]
-    if job.start <= hour < job.end:
+    if within(hour, start, end):
         return a.work, job.doing.format(**names)
-    if a.kind in ("innkeeper", "barkeeper"):
+    if a.kind in ("innkeeper", "barkeeper", "gaoler", "prisoner"):
         return a.home, "asleep"
-    if hour >= job.end and hour < BEDTIME:
+    if end > 24:                         # the night watch: sleep the morning, then a few hours off
+        if within(hour, end - 24, end - 16):
+            return a.home, "asleep"
         return a.evening, EVENING[a.evening_kind].format(**names)
-    return a.home, "asleep" if hour >= BEDTIME + 1 or hour < job.start - 1 else "at home"
+    if hour >= end and hour < BEDTIME:
+        return a.evening, EVENING[a.evening_kind].format(**names)
+    return a.home, "asleep" if hour >= BEDTIME + 1 or hour < start - 1 else "at home"
+
+
+def church_of(level):
+    return next((b for b in level.buildings if b.kind in ("temple", "chapel")), None)
+
+
+def sunday(level, out: list, hour: float, names: dict) -> None:
+    """The Sunday service: the priest at the altar, and most of the city in the pews."""
+    if names.get("weekday") != "Sunday" or not within(hour, SERVICE[0] - CHURCHGOING, SERVICE[1]):
+        return
+    church = church_of(level)
+    if church is None:
+        return
+    t = level.tiles
+    inside = church.floor(t)
+    pews = [c for c in inside if t[c] == T.BENCH] or inside
+    altar = [c for c in inside if any(level.in_bounds(c[0] + dx, c[1] + dy) and t[c[0] + dx, c[1] + dy] == T.ALTAR
+                                      for dx in (-2, -1, 0, 1, 2) for dy in (-1, 0, 1))] or inside
+    room = len(inside)
+    dx, dy = church.door
+    def far(a):
+        return max(abs(a.x - dx), abs(a.y - dy) * 2)
+    going = "at the Sunday service" if hour >= SERVICE[0] else "on the way to the Sunday service"
+    faithful = sorted((i for i, a in enumerate(level.actors) if a.kind in WORSHIP and a.chase is None
+                       and a.fleeing is None and far(a) <= CHURCH_WALK), key=lambda i: far(level.actors[i]))
+    for n, i in enumerate(faithful[:room]):
+        out[i] = (pews if n < len(pews) else inside, going)
+    for i, a in enumerate(level.actors):
+        if a.kind == "priest":
+            out[i] = (altar, "leading the Sunday service")
+
+
+def plans(level, hour: float, names: dict) -> list:
+    """Everyone's plan(), but with no more than INN_CROWD in the inn: the staff, whoever's
+    already inside, then the first to come (the same ones all evening). The rest go elsewhere.
+    On a Sunday morning, the city goes to the service (sunday)."""
+    out = [plan(a, hour, names) for a in level.actors]
+    sunday(level, out, hour, names)
+    inn = next((b for b in level.buildings if b.kind == "inn"), None)
+    if inn is None:
+        return out
+    bound = [i for i, (area, _) in enumerate(out) if area and inn.contains(*area[0])
+             and not level.actors[i].animal]
+    if len(bound) <= INN_CROWD:
+        return out
+    staff = [i for i in bound if level.actors[i].kind in ("innkeeper", "barkeeper")]
+    guests = [i for i in bound if i not in staff]
+    day = names.get("day", 0)
+    guests.sort(key=lambda i: (not inn.contains(level.actors[i].x, level.actors[i].y),
+                               random.Random(f"{level.actors[i].name}{day}").random()))
+    away = guests[max(0, INN_CROWD - len(staff)):]
+    if not away:
+        return out
+    if any(b.kind == "guardhouse" for b in level.buildings):    # a city: out walking the streets
+        from .citylife import streets
+        green, word = streets(level), "wandering the streets"
+    else:
+        green = getattr(level, "_green", None)
+        if green is None:
+            green = level._green = settle_green(level)
+        word = "chatting on the green"
+    for i in away:
+        a = level.actors[i]
+        if hour >= BEDTIME or hour < 4 or not green:
+            out[i] = (a.home, "at home")
+        else:
+            out[i] = (green, word)
+    return out
+
+
+def haunt(a: Actor, hour: float, names: dict) -> tuple[list, str]:
+    """Somewhere an idler goes: one of their haunts, a different one every HAUNT_MINUTES or so
+    (each keeps their own times), the evening ones once it's evening."""
+    when = "evening" if hour >= 18 or hour < 4 else "day"
+    choices = [h for h in a.haunts if h[2] in (when, "any") and h[1]] or [h for h in a.haunts if h[1]]
+    if not choices:
+        return a.home, "at home"
+    slot = int((hour * 60 + a.seed % HAUNT_MINUTES) // HAUNT_MINUTES)
+    pick = random.Random(a.seed * 7919 + names.get("day", 0) * 131 + slot).randrange(len(choices))
+    doing, tiles, _ = choices[pick]
+    return tiles, doing.format(**names)
 
 
 def names_for(level, engine) -> dict:
     inn = next((b.name for b in level.buildings if b.kind == "inn"), "the inn")
     herd = next((p.animal for p in level.places if p.kind == "pasture"), "sheep")
     crop = T.TILES[level.crop].name if level.crop is not None else "vegetables"
-    return {"inn": inn, "town": level.name, "crop": crop, "herd": ANIMALS[herd].plural, "price": ROOM_PRICE}
+    day = int(engine.minutes // 1440) if engine is not None else 0
+    return {"inn": inn, "town": level.name, "crop": crop, "herd": ANIMALS[herd].plural, "price": ROOM_PRICE,
+            "day": day, "weekday": weekday(engine.minutes) if engine is not None else ""}
 
 
 def walk_costs(level) -> np.ndarray:
@@ -375,8 +683,12 @@ def advance(level, minutes: float, engine, rng: random.Random | None = None) -> 
         taken = {(a.x, a.y) for a in level.actors}
         if you:
             taken.add(you)
-        for a in level.actors:
-            area, a.doing = plan(a, hour, names)
+        for a, (area, a.doing) in zip(level.actors, plans(level, hour, names)):
+            if a.chase is not None or a.fleeing is not None:
+                a.doing = "chasing a thief" if a.chase is not None else "running from the guards"
+                continue                       # game/citylife.py moves them
+            if a.kind == "child" and a.doing == "playing tag" and a.friends:
+                continue                       # ... and children at their games
             a.budget = min(a.budget + elapsed, MOST_STEPS * pace(a))
             while a.budget >= pace(a):
                 a.budget -= pace(a)
@@ -394,8 +706,7 @@ def pace(a: Actor) -> float:
 def snap(level, hour: float, names: dict, rng: random.Random, you) -> None:
     """Everyone where they'd be by now."""
     taken = {you} if you else set()
-    for a in level.actors:
-        area, a.doing = plan(a, hour, names)
+    for a, (area, a.doing) in zip(level.actors, plans(level, hour, names)):
         free = [c for c in area if c not in taken] or area
         a.x, a.y = rng.choice(free)
         taken.add((a.x, a.y))
@@ -510,10 +821,17 @@ def talk(a: Actor, level, engine, rng: random.Random | None = None) -> str:
     if a.doing == "asleep":
         return f"{a.name} is fast asleep."
     names = names_for(level, engine)
-    line = rng.choice(JOBS[a.kind].lines).format(**names)
+    line = rng.choice(JOBS[a.shown_kind].lines).format(**names)
+    if a.fleeing is not None:
+        return f"{a.name} shoves past you, running."
+    if a.kind in ROYAL:
+        if not a.met:
+            a.met = True
+            return f'{a.title} regards you: "{line}"'
+        return f'{a.title}: "{line}"'
     if not a.met:
         a.met = True
-        return f'{a.name}, the {a.kind}: "Hello! I\'m {a.name.split()[0]}. {line}"'
+        return f'{a.title}: "Hello! I\'m {a.name.split()[0]}. {line}"'
     return f'{a.name.split()[0]}: "{line}"'
 
 

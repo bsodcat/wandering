@@ -58,13 +58,16 @@ BASE_HIT = 0.75             # your chance to land a blow, before the weapon and 
 REAL_WEAPONS = {"dagger", "spear", "short sword", "axe", "club", "mace", "quarterstaff"}
 # The shopkeeper's wares: kind -> price in coins
 WARES = {"club": 3, "quarterstaff": 4, "dagger": 6, "spear": 9, "mace": 12, "short sword": 16,
-         "padded jerkin": 6, "leather coat": 12, "mail shirt": 30, "fur coat": 18,
-         "leather cap": 3, "iron helm": 10, "fur hat": 5, "straw hat": 2,
-         "wool cloak": 6, "oilskin cloak": 10, "fur cloak": 14,
+         "padded jerkin": 6, "leather coat": 12, "mail shirt": 30, "fur coat": 18, "sheepskin coat": 14,
+         "leather cap": 3, "iron helm": 10, "fur hat": 5, "straw hat": 2, "wool hood": 4,
+         "wool cloak": 6, "oilskin cloak": 10, "fur cloak": 14, "wolfskin cloak": 16,
+         "linen shirt": 3, "wool shirt": 5, "quilted underclothes": 10,
          "wooden shield": 6, "iron-bound shield": 14,
-         "leather gloves": 4, "fur mittens": 5,
+         "leather gloves": 4, "fur mittens": 5, "wool mittens": 3,
          "leather boots": 6, "hobnailed boots": 9, "fur-lined boots": 10,
-         "climbing gear": 20, "axe": 8, "shovel": 5}
+         "climbing gear": 20, "axe": 8, "shovel": 5, "lockpick": 3,
+         "pickaxe": 9, "lantern": 14, "rope grapple": 12, "torch": 2, "saddle": 15,
+         "strip of cloth": 1, "pitch": 3, "animal fat": 2}
 
 
 def weapon_of(p) -> tuple[str | None, Weapon]:

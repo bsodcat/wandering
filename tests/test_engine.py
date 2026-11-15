@@ -163,14 +163,17 @@ class KeyTests(unittest.TestCase):
         e.handle_key(KeySym.UP)                      # round to Quit, the last item
         self.assertFalse(e.handle_key(KeySym.RETURN))
 
-    def test_o_cycles_overlays_and_m_reveals(self):
+    def test_o_cycles_overlays_and_only_the_dev_console_reveals(self):
         e = engine()
         for i in range(len(OVERLAYS)):
             self.assertEqual(e.overlay, i)
             e.handle_key(KeySym.O)
         self.assertEqual(e.overlay, 0)
+        self.assertFalse(e.reveal_local)              # only what you've seen, from the start
         e.handle_key(KeySym.M)
-        self.assertTrue(e.reveal)
+        self.assertFalse(e.reveal)
+        e.console.run("reveal on")
+        self.assertTrue(e.reveal and e.reveal_local)
 
     def test_the_dead_dont_move(self):
         e = engine()

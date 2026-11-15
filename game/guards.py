@@ -10,8 +10,7 @@ from __future__ import annotations
 import random
 
 from . import wild
-from .climate import hour_of_day
-from .people import JOBS
+from .people import on_duty as at_work
 
 GUARD_REACH = 2
 ARCHER_RANGE = 9
@@ -22,9 +21,7 @@ DAMAGE = {"guard": (3, 8), "archer": (3, 7)}
 
 
 def on_duty(a, minutes: float) -> bool:
-    job = JOBS[a.kind]
-    hour = float(hour_of_day(minutes))
-    return job.start <= hour < job.end
+    return at_work(a, minutes) and a.chase is None
 
 
 def defend(level, engine, rng: random.Random, elapsed: float) -> None:

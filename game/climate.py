@@ -21,9 +21,17 @@ from . import biomes as B
 MINUTES_PER_HOUR = 60
 HOURS_PER_DAY = 24
 MINUTES_PER_DAY = MINUTES_PER_HOUR * HOURS_PER_DAY
-DAYS_PER_SEASON = 30
+# The calendar: twelve months of 28 days (four weeks each), three months to a season.
+DAYS_PER_MONTH = 28
+MONTHS = ["Thaw", "Seedtide", "Blossom",           # spring
+          "Highsun", "Haymonth", "Goldmonth",      # summer
+          "Reaping", "Leaffall", "Mistmonth",      # autumn
+          "Frost", "Deepwinter", "Lastsnow"]       # winter
+MONTHS_PER_SEASON = 3
 SEASONS = ["Spring", "Summer", "Autumn", "Winter"]
-DAYS_PER_YEAR = DAYS_PER_SEASON * len(SEASONS)
+WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+DAYS_PER_SEASON = DAYS_PER_MONTH * MONTHS_PER_SEASON
+DAYS_PER_YEAR = DAYS_PER_MONTH * len(MONTHS)
 MIDSUMMER = 0.375            # of the way through the year (the middle of summer, north)
 SEASON_SWING = 14.0          # degrees C between the yearly mean and midsummer, at the poles
 DAY_SWING = 5.0              # degrees C between the daily mean and mid-afternoon
@@ -44,9 +52,38 @@ def calendar(minutes: int) -> tuple[int, str, int, int, int]:
     return year + 1, SEASONS[season], day_of_season + 1, hour, minute
 
 
-def date_text(minutes: int) -> str:
-    year, season, day, _, _ = calendar(minutes)
-    return f"{season} {day}, Year {year}"
+def date(minutes: int, lat: float = 0.0) -> tuple[int, str, int, str, str]:
+    """(year, month, day of the month, weekday, season). The months and seasons are named for
+    the north; south of the equator (lat > 0) the year runs half a turn the other way round, so
+    there the names are shifted six months to match the weather and the trees."""
+    day = int(minutes) // MINUTES_PER_DAY
+    year, day_of_year = divmod(day, DAYS_PER_YEAR)
+    month, day_of_month = divmod(day_of_year, DAYS_PER_MONTH)
+    if lat > 0:
+        month = (month + len(MONTHS) // 2) % len(MONTHS)
+    return year + 1, MONTHS[month], day_of_month + 1, WEEKDAYS[day % 7], SEASONS[month // MONTHS_PER_SEASON]
+
+
+def weekday(minutes: int) -> str:
+    return WEEKDAYS[int(minutes) // MINUTES_PER_DAY % 7]
+
+
+def date_text(minutes: int, lat: float = 0.0) -> str:
+    """e.g. "Sunday 14 Highsun, Year 3"."""
+    year, month, day, wd, _ = date(minutes, lat)
+    return f"{wd} {day} {month}, Year {year:,}"
+
+
+def day_text(minutes: int, lat: float = 0.0) -> str:
+    """e.g. "Sunday 14 Highsun"."""
+    _, month, day, wd, _ = date(minutes, lat)
+    return f"{wd} {day} {month}"
+
+
+def season_text(minutes: int, lat: float = 0.0) -> str:
+    """e.g. "Summer, Year 3": the season where you are (see date)."""
+    year, _, _, _, season = date(minutes, lat)
+    return f"{season}, Year {year:,}"
 
 
 def clock_text(minutes: int) -> str:

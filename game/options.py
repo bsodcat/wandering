@@ -5,10 +5,14 @@ options screen on its own. The time skip screen (also T in a game) picks how man
 and what they bring (game/eras.py); Start hands that to the game (game/passage.py counts the years). The options screen sets:
 
 - Display: windowed or fullscreen (Alt+Enter or F11 toggles it any time).
-- Font: the classic Terminal bitmap font, or a TrueType font drawn at any size.
+- Font: Classic Console Neue (the default: a pixel font that comes with the game, in fonts/,
+  drawn on a 16x32 grid and kept pixel-sharp at 8x16 and 16x32), the classic Terminal bitmap
+  font, BigBlue Terminal (another bitmap font that comes with the game), or a TrueType font
+  drawn at any size.
 - Font size: the size of one tile, which sets the size the game is drawn at: 120 x 45 tiles,
   so 8x16 draws a 960x720 picture. "Auto" picks the biggest that fits your screen (Terminal
-  keeps its own 10x20 whenever that fits).
+  keeps its own 10x20, BigBlue Terminal its 8x12, Classic Console Neue its 16x32 or else 8x16,
+  whenever that fits).
 - Scale: how many times bigger that picture is shown. Always a whole number, every pixel
   repeated, so small fonts stay pixel-sharp rather than smeared. "Auto" is the biggest that
   fits the screen (or the window, if you resize it). Only a font too big for the screen at 1x
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 
 from tcod.event import KeySym, Modifier
@@ -31,15 +36,23 @@ from tcod.event import KeySym, Modifier
 from .ui import SCREEN_H, SCREEN_W
 
 FONT_DIR = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+# fonts that come with the game: next to main.py, or unpacked from the exe (PyInstaller --add-data fonts;fonts)
+OWN_FONT_DIR = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "fonts")
 FONTS = {   # name: (file, bitmap?) - bitmap fonts come in fixed sizes and are scaled to others
+    "Classic Console Neue": ("clacon2.ttf", False),
     "Terminal": ("8514oem.fon", True),
+    "BigBlue Terminal": ("Bigblue_Terminal_437BM.FON", True),
     "Consolas": ("consola.ttf", False),
     "Lucida Console": ("lucon.ttf", False),
     "Courier New": ("cour.ttf", False),
 }
 FONT_SIZES = ["Auto", (6, 12), (8, 16), (10, 20), (12, 24), (14, 28), (16, 32), (20, 40)]   # all 1:2: 4:3
 SCALES = ["Auto", 1, 2, 3, 4]
-NATIVE = {"Terminal": (10, 20)}     # bitmap fonts' own size: crispest of all
+DEFAULT_FONT = "Classic Console Neue"
+# pixel fonts' own sizes, best first: crispest of all. Classic Console Neue is a TrueType font
+# drawn on a pixel grid (PIXEL_GRID), so it's rendered pixel by pixel, not smoothed.
+NATIVE = {"Terminal": [(10, 20)], "BigBlue Terminal": [(8, 12)], "Classic Console Neue": [(16, 32), (8, 16)]}
+PIXEL_GRID = {"Classic Console Neue": (16, 32)}
 SCREEN_GUESS = (1920, 1040)         # until the window says how big the screen really is
 DISPLAYS = ["Windowed", "Fullscreen"]
 
@@ -51,11 +64,13 @@ def settings_path() -> str:
 
 
 def font_path(name: str) -> str:
-    return os.path.join(FONT_DIR, FONTS[name][0])
+    """Where the font is: the game's own fonts folder if it's there, else Windows's."""
+    own = os.path.join(OWN_FONT_DIR, FONTS[name][0])
+    return own if os.path.exists(own) else os.path.join(FONT_DIR, FONTS[name][0])
 
 
 def available_fonts() -> list[str]:
-    return [name for name in FONTS if os.path.exists(font_path(name))] or ["Terminal"]
+    return [name for name in FONTS if os.path.exists(font_path(name))] or [DEFAULT_FONT]
 
 
 def fits(frame: tuple[int, int], area: tuple[int, int]) -> int:
@@ -66,7 +81,7 @@ def fits(frame: tuple[int, int], area: tuple[int, int]) -> int:
 @dataclass
 class Settings:
     fullscreen: bool = False
-    font: str = "Terminal"
+    font: str = DEFAULT_FONT
     font_size: object = "Auto"        # "Auto" or (width, height)
     scale: object = "Auto"            # "Auto" or a whole number
 
@@ -75,9 +90,9 @@ class Settings:
         it has one that fits, else the biggest that fits `area` (the screen) at 1x."""
         if self.font_size != "Auto":
             return tuple(self.font_size)
-        native = NATIVE.get(self.font)
-        if native and fits(frame_of(native), area) >= 1:
-            return native
+        for native in NATIVE.get(self.font, []):
+            if fits(frame_of(native), area) >= 1:
+                return native
         sizes = [s for s in FONT_SIZES[1:] if fits(frame_of(s), area) >= 1]
         return sizes[-1] if sizes else FONT_SIZES[1]
 
@@ -126,7 +141,7 @@ class Settings:
         if s.font_size not in FONT_SIZES:
             s.font_size = "Auto"
         if s.font not in FONTS:
-            s.font = "Terminal"
+            s.font = DEFAULT_FONT
         return s
 
 
@@ -227,7 +242,7 @@ class Menu:
             text = size_text(s.font_size)
             if s.font_size == "Auto":
                 text += f" ({size_text(cell)})"
-            if NATIVE.get(s.font) == cell:
+            if cell in NATIVE.get(s.font, []):
                 text += " native"
             elif fits(s.frame(self.area), self.area) < 1:
                 text += " too big"

@@ -297,6 +297,10 @@ def generate_region(world, x: int, y: int) -> Level:
         people.populate(level, site, random.Random(world.region_seed(x, y) + 1))
     bury(level, random.Random(world.region_seed(x, y) + 2), BURIED.get(site.kind if site else None, BURIED[None]),
          town=site is not None and site.kind == "town")
+    lying_about(level, world, x, y, site, random.Random(world.region_seed(x, y) + 5))
+    from . import mining, ravines
+    ravines.carve_fissure(level, world, x, y, site, random.Random(world.region_seed(x, y) + 6))
+    mining.place_veins(level, world, random.Random(world.region_seed(x, y) + 7))
     if site is None and world.biome[x, y] == B.PASTURE:
         graze(level, farming.herd_for(farming.land_at(world, x, y)), random.Random(world.region_seed(x, y) + 4))
     wild.populate_region(level, world, x, y, site, random.Random(world.region_seed(x, y) + 3))
@@ -334,6 +338,31 @@ def bury(level: Level, rng: random.Random, share: float, town: bool = False) -> 
         level.buried[(int(x), int(y))] = items.treasure(rng, town)
 
 
+FLINT = {None: 1 / 900, B.HILLS: 1 / 300, B.MOUNTAINS: 1 / 250, B.PEAKS: 1 / 300, B.DOWNS: 1 / 250,
+         B.DESERT: 1 / 400, B.SHRUBLAND: 1 / 500}   # share of open ground with a flint lying on it
+STONY = (T.ROCK, T.BOULDER, T.SCREE, T.SAND)       # and four times that next to stony ground
+STICKS = 1 / 700                                    # a fallen stick, on ground beside a tree
+
+
+def lying_about(level: Level, world, x: int, y: int, site, rng: random.Random) -> None:
+    """Flint on the ground (more on stony ground and in the hills) and fallen sticks in the woods,
+    for picking up: what a campfire and a torch are made of (game/crafting.py)."""
+    t = level.tiles
+    open_ground = T.WALK[t] & T.NATURAL[t] & ~T.WATERY[t]
+    near = lambda tiles: np.pad(np.isin(t, tiles), 1)[2:, 1:-1] | np.pad(np.isin(t, tiles), 1)[:-2, 1:-1] | \
+        np.pad(np.isin(t, tiles), 1)[1:-1, 2:] | np.pad(np.isin(t, tiles), 1)[1:-1, :-2]
+    share = FLINT.get(int(world.biome[x, y]), FLINT[None]) * (0.3 if site is not None else 1.0)
+    chance = np.where(near(STONY), share * 4, share)
+    draws = np.random.default_rng(rng.randrange(1 << 30)).random(t.shape)
+    for gx, gy in zip(*np.nonzero(open_ground & (draws < chance))):
+        if (int(gx), int(gy)) not in level.exits:
+            items.drop(level, int(gx), int(gy), "flint")
+    woods = open_ground & near(list(trees.KIND)) & (np.random.default_rng(rng.randrange(1 << 30)).random(t.shape) < STICKS)
+    for gx, gy in zip(*np.nonzero(woods)):
+        if (int(gx), int(gy)) not in level.exits:
+            items.drop(level, int(gx), int(gy), "stick")
+
+
 def make_level(world, key: tuple) -> Level:
     """Builds the level for a key. The same key always builds the same level."""
     kind, x, y = key[:3]
@@ -344,6 +373,9 @@ def make_level(world, key: tuple) -> Level:
     if kind == "cave" and site is not None:
         wild.populate_cave(level, site, key[3], structures.cave_depth(site.name),
                            random.Random(world.region_seed(x, y) * 37 + key[3]))
+    if kind in ("cave", "ravine"):
+        from . import mining
+        mining.place_veins(level, world, random.Random(world.region_seed(x, y) * 41 + key[3]))
     return level
 
 

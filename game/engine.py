@@ -53,12 +53,19 @@ from tcod.event import KeySym, Modifier
 
 from . import biomes as B
 from . import carts
+from . import citylife
 from . import combat
 from . import devconsole
 from . import elevation
 from . import eras
 from . import erosion
+from . import crafting
 from . import gear
+from . import horses
+from . import lights
+from . import locks
+from . import mining
+from . import ravines
 from . import guards
 from . import items
 from . import people
@@ -86,7 +93,7 @@ MOVES = {
 }
 WAIT_KEYS = {KeySym.PERIOD, KeySym.KP_5}
 ENTER_KEYS = {KeySym.RETURN, KeySym.KP_ENTER}
-REST_KEY, OVERLAY_KEY, REVEAL_KEY, LAYER_KEY = KeySym.Z, KeySym.O, KeySym.M, KeySym.V
+REST_KEY, OVERLAY_KEY, LAYER_KEY = KeySym.Z, KeySym.O, KeySym.V
 OVERWORLD_EFFORT = 0.5  # a day's travel is steadier going than scrambling about on foot
 MENU_KEY = KeySym.ESCAPE  # the pause menu: resume, options, quit
 SKIP_KEY = KeySym.T       # the time skip: pass the ages (game/eras.py)
@@ -94,8 +101,15 @@ FULLSCREEN_KEY = KeySym.F11
 OVERLAYS = ["Normal", "Elevation", "Temperature", "Moisture", "Weather"]
 PICKUP_KEY, DIG_KEY, BAG_KEY, USE_KEY = KeySym.G, KeySym.X, KeySym.I, KeySym.E
 GEAR_KEY = KeySym.Q       # the equipment menu
+CRAFT_KEY = KeySym.K      # the crafting menu (game/crafting.py)
+FIRE_WARMTH = 15.0        # degrees C a campfire beside you adds
+STICKS = (1, 3)           # sticks that fall round a felled tree
 ATTACK_MINUTES, ATTACK_EFFORT = 0.5, 1.5  # a blow
 MEAL_MINUTES = 5
+TALK_REACH = 3         # tiles off you can talk or trade with someone you can see, without walking over
+SKIN_MINUTES = 20
+FAT = {"wolf": 2, "rabbit": 1, "squirrel": 1, "bird": 1, "rat": 1, "bat": 1}   # lumps of fat a carcass gives
+BLADES = ("dagger", "short sword", "crude knife", "rusty dagger", "axe")   # what will skin a carcass
 SOUP_MINUTES = 15
 DIRECTIONS = {(0, 0): "here", (0, -1): "north", (0, 1): "south", (-1, 0): "west", (1, 0): "east",
               (-1, -1): "north-west", (1, -1): "north-east", (-1, 1): "south-west", (1, 1): "south-east"}
@@ -119,15 +133,16 @@ REST_HOURS = 8
 TURN_MINUTES = 6        # a long wait counts as a turn per this many minutes (a step or a blow is one)
 WADING = (T.WATER, T.RICE)   # tiles where you stand in water
 RIVER_FORD_TURNS = 10   # turns in the water fording a river on the overworld
-LANTERN = 6             # how many columns your lantern lights, underground or on a dark night
 WET_DETOUR = 4          # a walk to the pointer goes this many tenths of a minute round per point of wetting
 LOOKOUT_RANGE = 12     # regions you can see from the top of a tower
-ABOVE_GROUND = ("tower", "inn_up")     # floors built over a building: the ground shows around them
+ABOVE_GROUND = ("tower", "inn_up", "guard_up")     # floors built over a building: the ground shows around them
 LOOKOUT_SIGHT = 1.5    # how much further you see the ground from a rooftop than standing on it
 LOCAL_KNOWLEDGE = {"city": 20, "town": 14, "village": 8, "inn": 6, "fort": 10}  # regions around a settlement its people tell you about
 LEAF_NAMES = {trees.BROADLEAF: "broadleaf", trees.PINE: "pine", trees.JUNGLE: "jungle"}
 WHERE_STAIRS_GO = {"cave": "the caves below", "crypt": "a crypt below", "tower": "the tower above",
                    "region": "the surface", "inn_up": "the rooms upstairs", "cellar": "the cellar",
+                   "dungeon": "the dungeon below", "guard_up": "the sergeant's floor",
+                   "guard_cells": "the lockup below",
                    "arena": "the arena"}
 SKY = {"Clear": "clear", "Cloudy": "cloudy", "Overcast": "overcast", "Fog": "foggy", "Rain": "raining",
        "Storm": "stormy", "Snow": "snowing", "Blizzard": "a blizzard"}
@@ -189,13 +204,17 @@ class Engine:
         self.room_until: float | None = None  # when your inn room key goes back
         self.relief = False                # o on a local map: colour it by height
         self.disturbed = False             # something happened that should stop a walk
-        self.pending = None                # (x, y, do, stand on it, who): to do once you get there
+        self.pending = None                # (x, y, do, stand on it, who, reach): to do once you get there
         self.rng = random.Random()         # blows and bites
         self.washed_said = -1e9            # when you were last told the rain washed mud down
         self.skip_request: tuple | None = None   # (years, change): a time skip main.py is to run
         self.local_visible = np.zeros((1, 1), dtype=bool)
         self.below_visible: np.ndarray | None = None   # the ground you can see from a rooftop
-        self.reveal_local = True           # local maps shown whole from the moment you enter (m toggles)
+        self.edge = None                   # (level key, x, y) of a chasm or fissure you stopped at
+        self.horses: list = []             # [level key, Actor]: your horses where you left them (game/horses.py)
+        self.mount = None                  # the horse you're riding
+        self.called = None                 # (horse, the minute it gets here) when you've called one
+        self.reveal_local = False          # local maps shown whole: the dev console's reveal only
         self.paused = False                # the dev console's time pause: the clock stands still
         self.forced_weather: str | None = None   # and its weather override
         self.console = devconsole.DevConsole(self)   # ` : the dev console
@@ -251,6 +270,8 @@ class Engine:
     # ------------------------------------------------------------- queries
 
     def say(self, text: str) -> None:
+        if not isinstance(text, str) or not text:      # only words go in the log
+            return
         if self.messages and self.messages[-1] == text:
             self.repeats += 1         # shown as "(x3)" rather than filling the log
             return
@@ -300,8 +321,14 @@ class Engine:
 
     @property
     def foliage(self) -> str:
-        """How the broadleaf trees look here this time of year."""
-        return trees.foliage(self.lat, self.minutes)
+        """How the broadleaf trees look here this time of year (where you stand: in the week a
+        change comes, the trees turn one by one)."""
+        return self.foliage_at(self.lx, self.ly) if self.level is not None else trees.foliage(self.lat, self.minutes)
+
+    def foliage_at(self, x: int, y: int) -> str:
+        """How the broadleaf leaves over (x, y) on this local map look now."""
+        rx, ry = self.level.region[0], self.level.region[1]
+        return trees.foliage(self.lat, self.minutes, float(trees.turn_delay(x + rx * 1000, y + ry * 1000)))
 
     @property
     def indoor_air(self) -> float:
@@ -337,17 +364,18 @@ class Engine:
 
     def sight_radius(self) -> int:
         """How far you can make things out. On the overworld it's regions: less at night and in
-        fog or rain, more from high ground. On a local map it's tiles, and your lantern always
-        lights the nearest few."""
+        fog or rain, more from high ground. On a local map it's tiles, and your own light (a
+        torch, a lantern, or just your eyes: game/lights.py) always shows the nearest few."""
         c = self.now
         if self.level is None:
             r = 2 + 7 * c.light - 4 * c.fog - 2 * c.precip
             r += {B.HILLS: 1, B.MOUNTAINS: 3, B.PEAKS: 4}.get(int(self.world.biome[self.player.x, self.player.y]), 0)
             return max(1, round(r))
+        own = lights.sight(self.player)
         if self.level.underground:
-            return LANTERN
+            return own
         r = (4 + 36 * c.light) * (1 - 0.75 * c.fog) * (1 - 0.4 * c.precip)
-        return max(LANTERN, round(r))
+        return max(own, round(r))
 
     def travel_time(self, x: int, y: int, dx: int, dy: int) -> tuple[float, float]:
         """(hours, wetness) to step into overworld region (x, y)."""
@@ -368,11 +396,15 @@ class Engine:
         if self.now.light < 0.25:
             hours *= NIGHT_SLOWDOWN
         hours *= SNOW_SLOWDOWN.get(self.now.kind, 1.0)
+        if self.mount is not None:
+            hours *= horses.RIDE_ROAD if on_road else horses.RIDE_WORLD
         return hours, soak
 
     def step_minutes(self, tile: int, dx: int, dy: int) -> float:
         """Minutes to take one step onto a local tile."""
         minutes = float(T.MINUTES[tile]) * (1.41 if dx and dy else 1.0)
+        if self.mount is not None and not T.ROOF[tile]:
+            minutes *= horses.RIDE_LOCAL                       # on horseback
         if not self.underground and not T.ROOF[tile]:
             if self.now.light < 0.25:
                 minutes *= 1.3
@@ -486,7 +518,7 @@ class Engine:
         if stairs is None:
             return None
         cx, cy = stairs
-        if level.key[0] == "inn_up":
+        if level.key[0] in ("inn_up", "guard_up"):
             b = ground.building_at(*stairs)
             if b is not None:
                 cx, cy = b.x0 + b.w // 2, b.y0 + b.h // 2
@@ -537,10 +569,39 @@ class Engine:
         tile = int(level.tiles[nx, ny])
         if tile in trees.KIND and self.player.inventory.count("axe"):
             return self.chop(nx, ny)
+        if self.mount is not None:                   # on horseback: not indoors, not up rock, not over the edge
+            if tile in T.DROPS:
+                self.say(f"{horses.display(self.mount).capitalize()} shies away from the edge.")
+                return False
+            if tile in elevation.CLIMBABLE:
+                self.say("You can't ride up rock. Get down first.")
+                return False
+            if T.ROOF[tile] or tile == T.DOOR:
+                self.say(horses.dismount(self, " and leave it by the door"))
+        if tile in T.DROPS and not p.noclip:          # a chasm or a fissure: stop at the edge first
+            if self.edge == (level.key, nx, ny):
+                self.say(ravines.fall(self, nx, ny))
+                return True
+            self.edge = (level.key, nx, ny)
+            self.say(f"You stop at the edge of a deep {T.TILES[tile].name}. Step again to climb down into it.")
+            return False
+        if tile in mining.BREAKABLE and p.inventory.count(mining.PICK) and not p.noclip \
+                and not (gear.can_climb(p) and tile in elevation.CLIMBABLE) and mining.can_break(level, nx, ny):
+            self.say(mining.break_rock(self, nx, ny))
+            return False
         if p.noclip:
             self.lx, self.ly = nx, ny
             self.pass_time(self.step_minutes(T.GRASS, dx, dy) / 60)
             return True
+        if tile == T.DOOR and locks.locked(level, nx, ny):
+            inside = level.building_at(self.lx, self.ly)
+            if inside is not None and inside is level.building_at(nx, ny):     # from inside: unbar it
+                locks.unlock(level, nx, ny)
+                self.say("You unbar the door from inside.")
+            else:
+                hint = " (e or a click: pick the lock)" if p.inventory.count(locks.PICK) else " You'd need a lockpick."
+                self.say("The door is locked." + hint)
+                return False
         roped = gear.can_climb(p)
         rock = tile in elevation.CLIMBABLE
         if not T.WALK[tile] and not (rock and roped):
@@ -574,6 +635,7 @@ class Engine:
         if someone is not None and not self.meet(someone):
             return False
         was_inside = self.indoors
+        self.edge = None
         self.lx, self.ly = nx, ny
         if note:
             self.say(note)
@@ -637,10 +699,9 @@ class Engine:
         return False
 
     def at_work(self, a) -> bool:
-        if a.animal or a.doing == "asleep":
+        if a.animal or a.doing == "asleep" or a.chase is not None or a.fleeing is not None:
             return False
-        job = people.JOBS[a.kind]
-        return job.start <= float(hour_of_day(self.minutes)) < job.end
+        return people.on_duty(a, self.minutes)
 
     def meet(self, someone) -> bool:
         """Walking into someone: pet them, trade, or talk and step past. Returns whether you
@@ -695,6 +756,30 @@ class Engine:
         self.pass_time(MEAL_MINUTES / 60)
         return f"You eat {items.amount(kind, 1)}."
 
+    def blade(self) -> str | None:
+        """A blade you carry that will skin a carcass: the one in your hand first."""
+        bag = self.player.inventory
+        held, _ = combat.weapon_of(self.player)
+        return next((k for k in (held, *BLADES) if k in BLADES and bag.count(k)), None)
+
+    def skin(self, carcass: str = "wolf carcass") -> str:
+        """Butchers a carcass you carry, with a blade: its fat (for torches and lanterns), and a
+        wolf's pelt besides."""
+        p = self.player
+        knife = self.blade()
+        if knife is None:
+            return "You've nothing sharp to skin it with."
+        if not p.inventory.take(carcass):
+            return f"You haven't got a {carcass}."
+        beast = carcass.replace(" carcass", "")
+        fat = FAT.get(beast, 1)
+        p.inventory.add("animal fat", fat)
+        self.pass_time(SKIN_MINUTES / 60)
+        if beast == "wolf":
+            p.inventory.add("wolf pelt")
+            return f"You skin the wolf with your {knife}, roll up the pelt and cut away {items.amount('animal fat', fat)}."
+        return f"You butcher the {beast} with your {knife} and cut away {items.amount('animal fat', fat)}."
+
     def eat_soup(self) -> str:
         """A bowl of the innkeeper's hot soup: warming, and the cure for wolf fever."""
         p = self.player
@@ -709,6 +794,11 @@ class Engine:
         """What's in a barrel or a chest: a tab to take things out, a tab to put things in."""
         level = self.level
         chest = level.tiles[x, y] == T.CHEST
+        if chest and locks.locked(level, x, y):
+            text = locks.pick(self, x, y, then=lambda e: e.open_barrel(x, y))
+            if text:
+                self.say(text)
+            return
         store = level.stores.get((x, y))
         if store is None:
             fill = items.fill_chest if chest else items.fill_barrel
@@ -740,6 +830,12 @@ class Engine:
     def click_at(self, x: int, y: int) -> bool:
         """A left click on the map: the use menu for what's there, if there's anything to do
         with it. Returns whether it opened."""
+        if self.level is None and (x, y) == (self.player.x, self.player.y) and self.horse_options():
+            menu = shops.Picker("You", lambda e: e.horse_options())     # on the world map: your horse
+            menu.refresh(self)
+            self.shop = menu
+            self.autopath = False
+            return True
         if self.level is None or not self.level.in_bounds(x, y) or not self.known()[x, y]:
             return False
         opts = self.options_at(x, y)
@@ -774,15 +870,42 @@ class Engine:
             first = a.name.split()[0]
             if a.kind in PETS:
                 out.append(shops.Option(f"Pet {a.name}", lambda e, a=a: go(a.x, a.y, lambda e: e.talk_to(a), who=a)))
+            elif a.kind == "horse":
+                name = horses.display(a)
+                if a.saddled:
+                    out.append(shops.Option(f"Ride {name}", lambda e, a=a: go(a.x, a.y, lambda e: horses.mount(e, a), who=a)))
+                    out.append(shops.Option(f"Take the saddle off {name}",
+                                            lambda e, a=a: go(a.x, a.y, lambda e: horses.unsaddle(e, a), who=a)))
+                else:
+                    out.append(shops.Option(f"Saddle {name}", lambda e, a=a: go(a.x, a.y, lambda e: horses.saddle(e, a), who=a),
+                                            ok=bool(p.inventory.count(horses.SADDLE))))
             elif not a.animal:
                 if self.at_work(a) and a.kind in ("lumberjack", "barkeeper", "innkeeper", "shopkeeper",
-                                                  "blacksmith", "carter"):
+                                                  "blacksmith", "carter", "tailor", "weaver", "merchant",
+                                                  "alchemist", "stablehand"):
                     out.append(shops.Option(f"Trade with {first}",
-                                            lambda e, a=a: go(a.x, a.y, lambda e: e.trade_with(a), who=a)))
-                out.append(shops.Option(f"Talk to {first}", lambda e, a=a: go(a.x, a.y, lambda e: e.talk_to(a), who=a)))
+                                            lambda e, a=a: go(a.x, a.y, lambda e: e.trade_with(a), who=a,
+                                                              reach=TALK_REACH)))
+                out.append(shops.Option(f"Talk to {first}", lambda e, a=a: go(a.x, a.y, lambda e: e.talk_to(a), who=a,
+                                                                              reach=TALK_REACH)))
         tile = int(level.tiles[x, y])
         if tile in T.CONTAINERS:
-            out.append(shops.Option(f"Open the {T.TILES[tile].name}", lambda e: go(x, y, lambda e: e.open_barrel(x, y))))
+            if locks.locked(level, x, y):
+                out.append(shops.Option(f"Pick the lock of the {T.TILES[tile].name}",
+                                        lambda e: go(x, y, lambda e: e.open_barrel(x, y)),
+                                        ok=bool(p.inventory.count(locks.PICK))))
+            else:
+                out.append(shops.Option(f"Open the {T.TILES[tile].name}",
+                                        lambda e: go(x, y, lambda e: e.open_barrel(x, y))))
+        if mining.can_break(level, x, y) and p.inventory.count(mining.PICK):
+            out.append(shops.Option(f"Break the {T.TILES[tile].name} (pickaxe)",
+                                    lambda e: go(x, y, lambda e: mining.break_rock(e, x, y))))
+        if tile in T.DROPS:
+            out.append(shops.Option(f"Climb down into the {T.TILES[tile].name}",
+                                    lambda e: go(x, y, lambda e: ravines.fall(e, x, y))))
+        if tile == T.DOOR and locks.locked(level, x, y):
+            out.append(shops.Option("Pick the lock of the door", lambda e: go(x, y, lambda e: locks.pick(e, x, y)),
+                                    ok=bool(p.inventory.count(locks.PICK))))
         if tile in (T.BED, T.BEDROLL):
             inn = level.key[0] == "inn_up" and p.inventory.count("room key")
             out.append(shops.Option("Sleep in the bed till morning" if inn else f"Rest on the {T.TILES[tile].name}",
@@ -800,6 +923,40 @@ class Engine:
             out += self.own_options()
         return out
 
+    def horse_options(self) -> list:
+        """Getting down off your horse, or calling one."""
+        if self.mount is not None:
+            return [shops.Option(f"Get down off {horses.display(self.mount)}", lambda e: horses.dismount(e))]
+        if self.horses:
+            found = horses.nearest(self)
+            label = f"Call {horses.display(found[0])}" if found else "Call your horse (none near enough)"
+            return [shops.Option(label, lambda e: horses.call(e), ok=found is not None)]
+        return []
+
+    def light_options(self) -> list:
+        """Lighting, putting out and fuelling a torch or your lantern."""
+        p, bag = self.player, self.player.inventory
+        out = []
+        if p.light is not None:
+            out.append(shops.Option(f"Put out the {p.light} ({p.light_hours:.1f} h left)",
+                                    lambda e: lights.put_out(e.player)))
+        for kind in ("torch", "lantern"):
+            if bag.count(kind) and p.light != kind:
+                out.append(shops.Option(f"Light {'a torch' if kind == 'torch' else 'your lantern'}"
+                                        f"{f' ({bag.count(kind)})' if kind == 'torch' else ''}",
+                                        lambda e, k=kind: lights.light(e.player, k)))
+        if bag.count("lantern"):
+            for fuel in lights.LANTERN_FUEL:
+                if bag.count(fuel):
+                    out.append(shops.Option(f"Fuel your lantern with {items.amount(fuel, 1)}",
+                                            lambda e, f=fuel: lights.add_fuel(e.player, "lantern", f)))
+        if p.light == "torch":
+            for fuel in lights.TORCH_FUEL:
+                if bag.count(fuel):
+                    out.append(shops.Option(f"Fuel your torch with {items.amount(fuel, 1)}",
+                                            lambda e, f=fuel: lights.add_fuel(e.player, "torch", f)))
+        return out
+
     def own_options(self) -> list:
         """What you can do with what you carry, and where you stand."""
         p, level = self.player, self.level
@@ -808,9 +965,19 @@ class Engine:
         tile = int(level.tiles[self.lx, self.ly])
         if bag.count("shovel") and T.DIGGABLE[tile] and not level.underground:
             out.append(shops.Option("Dig here", lambda e: e.dig()))
+        if self.blade():
+            for kind in [k for k in bag if k.endswith(" carcass")]:
+                verb = "Skin" if kind == "wolf carcass" else "Butcher"
+                out.append(shops.Option(f"{verb} {items.amount(kind, 1)} ({bag.count(kind)})",
+                                        lambda e, k=kind: e.skin(k)))
         for kind in items.FOODS:
             if bag.count(kind):
                 out.append(shops.Option(f"Eat {items.amount(kind, 1)} ({bag.count(kind)})", lambda e, k=kind: e.eat(k)))
+        out += self.light_options()
+        out += self.horse_options()
+        if level.key[0] == "ravine" and bag.count(ravines.GRAPPLE):
+            out.append(shops.Option("Throw the rope grapple up", lambda e: ravines.climb_out(e),
+                                    ok=ravines.can_climb_out(self)[0]))
         held, _ = combat.weapon_of(p)
         for kind in combat.WEAPONS:
             if bag.count(kind) and kind != held:
@@ -825,6 +992,7 @@ class Engine:
                 else:
                     out.append(shops.Option(f"Wear the {kind}", lambda e, k=kind: gear.wear(e.player, k)))
         out.append(shops.Option("Equipment... (q)", lambda e: e.equipment_menu()))
+        out.append(shops.Option("Craft... (k)", lambda e: setattr(e, "shop", crafting.menu(e))))
         if tile not in (T.BED, T.BEDROLL):
             out.append(shops.Option(f"Rest {REST_HOURS} hours", lambda e: e.rest()))
         return out
@@ -834,12 +1002,23 @@ class Engine:
         self.shop = shops.equipment(self)
         self.autopath = False
 
-    def go_do(self, x: int, y: int, do, on: bool = False, who=None):
+    def in_reach(self, x: int, y: int, on: bool = False, reach: int = 1) -> bool:
+        """Whether (x, y) is close enough to do something with: underfoot if `on`, else within
+        `reach` tiles (beyond the next tile, only if you can see it: you call out to someone)."""
+        if on:
+            return (x, y) == (self.lx, self.ly)
+        near = max(abs(x - self.lx), abs(y - self.ly))
+        if near <= 1:
+            return True
+        seen = self.local_visible.shape == self.level.tiles.shape and bool(self.local_visible[x, y])
+        return near <= reach and seen
+
+    def go_do(self, x: int, y: int, do, on: bool = False, who=None, reach: int = 1):
         """Does `do` now if (x, y) is in reach (or underfoot, if `on`), or walks you there first."""
-        if (on and (x, y) == (self.lx, self.ly)) or (not on and max(abs(x - self.lx), abs(y - self.ly)) <= 1):
+        if self.in_reach(x, y, on, reach):
             return do(self)
         goal = (x, y)
-        if not on and not self.level.walkable(x, y):        # beside it, the nearest side
+        if not on and (not self.level.walkable(x, y) or locks.locked(self.level, x, y)):   # beside it, the nearest side
             sides = [(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)
                      if (dx or dy) and self.level.walkable(x + dx, y + dy) and self.known()[x + dx, y + dy]]
             if not sides:
@@ -847,7 +1026,7 @@ class Engine:
             goal = min(sides, key=lambda c: max(abs(c[0] - self.lx), abs(c[1] - self.ly)))
         if not self.route(*goal):
             return "You don't know a way there."
-        self.pending = (x, y, do, on, who)
+        self.pending = (x, y, do, on, who, reach)
         self.goal, self.autopath, self.disturbed = goal, True, False
         return None
 
@@ -856,18 +1035,18 @@ class Engine:
         can't be)."""
         if self.pending is None:
             return False
-        x, y, do, on, who = self.pending
+        x, y, do, on, who, reach = self.pending
         if who is not None:
             if who not in self.level.actors and who not in self.level.creatures:
                 self.pending = None
                 return True
             x, y = who.x, who.y
             self.goal = (x, y)
-            self.pending = (x, y, do, on, who)
-        if (on and (x, y) == (self.lx, self.ly)) or (not on and max(abs(x - self.lx), abs(y - self.ly)) <= 1):
+            self.pending = (x, y, do, on, who, reach)
+        if self.in_reach(x, y, on, reach):
             self.pending = None
             text = do(self)
-            if text:
+            if isinstance(text, str) and text:    # (some actions say nothing, or just whether they worked)
                 self.say(text)
             return True
         return False
@@ -893,7 +1072,14 @@ class Engine:
         logs = trees.fell(level, x, y)
         level._walk_costs = None
         self.player.inventory.add("log", logs)
-        self.say(f"You fell the tree with your axe and cut {items.amount('log', logs)}.")
+        around = [(x + dx, y + dy) for dx in (-2, -1, 0, 1, 2) for dy in (-1, 0, 1)
+                  if (dx or dy) and level.walkable(x + dx, y + dy) and (x + dx, y + dy) not in level.exits]
+        self.rng.shuffle(around)
+        sticks = around[: self.rng.randint(*STICKS)]
+        for spot in sticks:                      # branches knocked off as it comes down
+            items.drop(level, *spot, "stick")
+        self.say(f"You fell the tree with your axe and cut {items.amount('log', logs)}."
+                 + (" Branches snap off around it." if sticks else ""))
         self.pass_time(CHOP_MINUTES / 60, effort=CHOP_EFFORT)
         return False
 
@@ -1103,6 +1289,8 @@ class Engine:
                 return False
             self.say("There are no stairs here." if key is None else f"These stairs go {'down' if tile == T.STAIRS_DOWN else 'up'}.")
             return False
+        if self.mount is not None:
+            self.say(horses.dismount(self, " and leave it at the top of the stairs"))
         nxt = self.get_level(key)
         if level.key[0] == "arena":           # the arena's buildings lead back to the arena
             for pos, back in list(nxt.exits.items()):
@@ -1110,7 +1298,8 @@ class Engine:
                     nxt.exits[pos] = level.key
         self.level = nxt
         self.lx, self.ly = nxt.arrival(level.key) or nxt.nearest_walkable(nxt.width / 2, nxt.height / 2)
-        self.say(f"You climb {'down' if tile == T.STAIRS_DOWN else 'up'} to {nxt.name}.")
+        place = nxt.name[0].lower() + nxt.name[1:] if nxt.name.startswith(("The ", "Upstairs")) else nxt.name
+        self.say(f"You climb {'down' if tile == T.STAIRS_DOWN else 'up'} to {place}.")
         if nxt.lookout and ("lookout", *nxt.region) not in self.visited:
             self.visited.add(("lookout", *nxt.region))
             self.learn_around(*nxt.region, LOOKOUT_RANGE)
@@ -1178,6 +1367,9 @@ class Engine:
             lines = wild.describe(beast) + lines
         if level.stores.get((x, y)) is not None and tile.id in T.CONTAINERS:
             lines.append("Holds " + items.describe_pile(level.stores[(x, y)]))
+        lock = locks.describe(level, x, y) if tile.id in (T.DOOR, T.CHEST) else None
+        if lock:
+            lines.append(lock)
         inside = level.building_at(x, y)
         if inside is not None and inside.name:
             lines.append(f"{'In' if T.ROOF[tile.id] else 'At'} {inside.name}")
@@ -1187,7 +1379,7 @@ class Engine:
             lines.append(f"Leads to {dest.name if dest else WHERE_STAIRS_GO[key[0]]}")
         kind = int(level.canopy[x, y])
         if kind:
-            look = self.foliage if kind == trees.BROADLEAF else "green"
+            look = self.foliage_at(x, y) if kind == trees.BROADLEAF else "green"
             leaves = {"green": "leaves", "budding": "budding leaves", "autumn": "autumn leaves",
                       "bare": "bare boughs"}[look]
             lines.append(f"{'A' if tile.id in trees.TRUNKS else 'Under a'} {LEAF_NAMES[kind]} tree, {leaves}")
@@ -1249,6 +1441,8 @@ class Engine:
             t = self.level.tiles
             cost = np.round(T.MINUTES[t] * 10 + T.SOAK[t] * WET_DETOUR).astype(np.int32)  # keep dry if you can
             cost[~T.WALK[t]] = 0
+            for door in locks.locked_doors(self.level):      # nor through a locked door
+                cost[door] = 0
         else:
             w = self.world
             cost = travel_cost(w.biome, w.river)
@@ -1354,11 +1548,16 @@ class Engine:
             self.now = self.weather()
             if not self.underground:
                 self.news(before, before_time)
+            fire = FIRE_WARMTH if self.level is not None and not self.indoors and \
+                crafting.near_fire(self.level, self.lx, self.ly) else 0.0
             for text in expose(p, dt, self.now, self.shelter, indoors=self.indoors, soak=soak,
-                               indoor_air=self.indoor_air):
+                               indoor_air=self.indoor_air, fire=fire):
                 self.say(text)
                 self.disturbed = True       # a warning about your body stops a walk
             soak = 0.0
+            heavy = not self.indoors and not self.underground and self.now.precip > 0.6
+            for text in lights.burn(p, dt, heavy):
+                self.say(text)
             for text in sickness.hour(p, self.minutes, dt, health_before):
                 self.say(text)
                 self.disturbed = True
@@ -1369,9 +1568,16 @@ class Engine:
             if self.player.inventory.take("room key", self.player.inventory.count("room key")):
                 self.say("It's mid-morning: your room key goes back to the barkeeper.")
         if self.level is not None:
+            for text in crafting.tend(self.level, self.minutes):
+                self.say(text)
+            came = horses.arrive(self)
+            if came:
+                self.say(came)
             if p.alive:
                 self.level.scent[self.lx, self.ly] = self.minutes     # wolves can follow you too
             people.advance(self.level, self.minutes, self)
+            citylife.crime(self.level, self, self.rng, hours * MINUTES_PER_HOUR)
+            citylife.play(self.level, self, self.rng, hours * MINUTES_PER_HOUR)
             wild.advance(self.level, self.minutes, self, self.rng)
             guards.defend(self.level, self, self.rng, hours * MINUTES_PER_HOUR)
         if p.god:
@@ -1552,14 +1758,11 @@ class Engine:
             self.use_menu()
         elif sym == GEAR_KEY and self.player.alive:
             self.equipment_menu()
+        elif sym == CRAFT_KEY and self.player.alive:
+            self.shop = crafting.menu(self)
+            self.autopath = False
         elif sym == DIG_KEY and self.player.alive:
             self.dig()
-        elif sym == REVEAL_KEY:
-            if self.level is None:
-                self.reveal = not self.reveal
-            else:
-                self.reveal_local = not self.reveal_local
-                self.say("You picture the whole of the map." if self.reveal_local else "You keep to what you've seen.")
         elif sym == LAYER_KEY and self.level is not None:
             self.treetops = not self.treetops
             self.say("You look up at the treetops." if self.treetops else "You look at the ground beneath the trees.")

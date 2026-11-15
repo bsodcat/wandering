@@ -60,6 +60,10 @@ class Player:
     afterdrop: int = 0            # turns of cooling left since you came out of cold water
     afterdrop_of: int = 0         # how many turns that afterdrop started with
     afterdrop_rate: float = 0.0   # degrees C a turn it started at
+    light: str | None = None      # what you have lit: "torch" or "lantern" (game/lights.py)
+    light_hours: float = 0.0      # hours left in it
+    torch_hours: list = field(default_factory=list)   # hours in the torches you made, used first
+    lantern_hours: float = 0.0    # fuel in your lantern while it's out
     god: bool = False             # the dev console's god mode: nothing hurts you
     noclip: bool = False          # and noclip: walk through anything
 
@@ -113,7 +117,7 @@ def wet_status(wet: float) -> str:
 
 
 def expose(p: Player, hours: float, c: Conditions, shelter: float, indoors: bool = False,
-           soak: float = 0.0, indoor_air: float = INDOORS) -> list[str]:
+           soak: float = 0.0, indoor_air: float = INDOORS, fire: float = 0.0) -> list[str]:
     """Spends `hours` in these conditions. `soak` is wetness added at once (wading a river).
     Indoors (under a roof or underground) the weather can't reach you and the air is
     `indoor_air`. Returns the messages worth telling the player."""
@@ -133,9 +137,9 @@ def expose(p: Player, hours: float, c: Conditions, shelter: float, indoors: bool
             if c.fog > 0.4:
                 rain += 3 * (1 - shelter)
             rain *= 1 - gear.cover(p)            # a cloak or a hat keeps some of it off
-        effective = felt + insulation(p)
+        effective = felt + insulation(p) + fire           # a campfire beside you warms you
         # wetness: rain soaks in, warmth and wind dry you off
-        drying = 3 + max(c.air if not indoors else indoor_air, 0) * 0.35 + (0 if indoors else c.wind * 0.05)
+        drying = 3 + max(c.air if not indoors else indoor_air, 0) * 0.35 + (0 if indoors else c.wind * 0.05) + fire
         if indoors and indoor_air >= 16:
             drying += 20   # a warm room with a fire
         p.wet = min(100.0, max(0.0, p.wet + (rain - (drying if rain < 1 else drying * 0.2)) * dt))

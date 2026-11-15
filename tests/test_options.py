@@ -75,7 +75,7 @@ class SettingsTests(unittest.TestCase):
             with open(path, "w") as f:      # an old file with a resolution, and nonsense
                 f.write('{"resolution": [1440, 1080], "font": "Comic Sans", "font_size": [7, 7], "scale": 9}')
             s = Settings.load(path)
-            self.assertEqual((s.font, s.font_size, s.scale), ("Terminal", "Auto", "Auto"))
+            self.assertEqual((s.font, s.font_size, s.scale), ("Classic Console Neue", "Auto", "Auto"))
             with open(path, "w") as f:
                 f.write('{"font": "Consolas", "font_size": [12, 24], "resolution": [1440, 1080]}')
             s = Settings.load(path)
@@ -121,7 +121,7 @@ class MenuTests(unittest.TestCase):
         m.handle_key(KeySym.DOWN)                        # Font
         m.handle_key(KeySym.RIGHT)
         if len(available_fonts()) > 1:
-            self.assertNotEqual(m.settings.font, "Terminal")
+            self.assertNotEqual(m.settings.font, "Classic Console Neue")
         m.handle_key(KeySym.DOWN)                        # Font size
         m.handle_key(KeySym.RIGHT)
         self.assertEqual(m.settings.font_size, FONT_SIZES[1])
@@ -187,7 +187,7 @@ class MenuTests(unittest.TestCase):
             self.assertIn(item, text)
         e.menu.show("options")
         text = screen_text(e)
-        for item in ("Display", "Windowed", "Font", "Terminal", "Font size", "Auto", "Scale", "pixel-sharp"):
+        for item in ("Display", "Windowed", "Font", "Classic Console Neue", "Font size", "Auto", "Scale", "pixel-sharp"):
             self.assertIn(item, text)
 
 

@@ -50,6 +50,9 @@ GALLERY = [   # (row name, tiles) - every tile appears here once
     ("furniture", [T.BED, T.TABLE, T.HEARTH, T.BARREL, T.WELL, T.STALL, T.OVEN, T.COUNTER, T.HOOKS,
                    T.WOODPILE, T.TROUGH, T.BEDROLL, T.RACK, T.CHEST, T.FORGE, T.ANVIL, T.TARGET, T.CART]),
     ("fields", [T.CROPS, T.WHEAT, T.RYE, T.RICE, T.MILLET]),
+    ("city", [T.THRONE, T.BOOKSHELF, T.BARS, T.GALLOWS, T.STOCKS, T.STAGE, T.BENCH, T.ALTAR, T.FOUNTAIN,
+              T.STATUE, T.CARPET, T.JUNK, T.FLOWERS]),
+    ("wild", [T.CAMPFIRE, T.ASHES, T.ORE_VEIN, T.CHASM, T.FISSURE]),
 ]
 GALLERY_TOP = 100
 SLOT = 4                       # columns between the tiles in a gallery row
@@ -67,6 +70,7 @@ CAVE = (8, 142, 64, 40)         # the goblin cave
 HILL = (140, 48, 34, 34, 14)                    # centre, radii and top level of the hill
 DIG_PATCH = (26, 18, 18, 10)                    # the dirt swatch: dig here
 PEN_W, PEN_H = 9, 5
+PENS_PER_ROW = 11               # pens side by side, between the goblin cave and the river
 RIVER_X = 186                  # the river's west bank
 LAKE = (228, 128, 20, 34)      # centre and radii
 
@@ -274,7 +278,9 @@ def pens(level: Level, rng: random.Random) -> None:
     t = level.tiles
     used: set = set()
     jobs = list(people.JOBS)
-    for row, kinds in enumerate((jobs, list(ANIMALS))):
+    rows = [jobs[i: i + PENS_PER_ROW] for i in range(0, len(jobs), PENS_PER_ROW)]
+    rows += [list(ANIMALS)[i: i + PENS_PER_ROW] for i in range(0, len(ANIMALS), PENS_PER_ROW)]
+    for row, kinds in enumerate(rows):
         y0 = SPAWN[1] + 9 + row * (PEN_H + 3)
         x_start = SPAWN[0] - (len(kinds) * (PEN_W + 1)) // 2
         for i, kind in enumerate(kinds):

@@ -77,6 +77,7 @@ class Site:
     y: int
     port: bool = False   # on the sea: it has docks
     span: tuple = (1, 1)  # regions it covers, from (x, y) right and down (a city's 2 x 2)
+    ward: str = ""        # a fort watching over a city next to it: the city's name
 
     @property
     def settled(self) -> bool:
@@ -394,6 +395,26 @@ class Planner:
                 placed.append(self.add("city", x, y, CITY_SPAN))
         return placed
 
+    def watch(self, city: Site) -> Site | None:
+        """A small fort in a region next to a city, on the highest free ground about it: the
+        city's watch. A city that already has one (kept through a time skip) keeps it."""
+        if any(s.kind == "fort" and s.ward == city.name for s in self.sites):
+            return None
+        w, h = self.biome.shape
+        ring = [(x, y) for x in range(city.x - 1, city.x + city.span[0] + 1)
+                for y in range(city.y - 1, city.y + city.span[1] + 1)
+                if 0 <= x < w and 0 <= y < h and city.distance(x, y) == 1]
+        ok = [c for c in ring if B.TRAVEL[self.biome[c]] > 0 and not self.river[c] and not self.road[c]
+              and self.biome[c] not in (B.GLACIER, B.VOLCANO, B.LAVA_FIELD)
+              and all(s.distance(*c) >= 1 for s in self.sites)]
+        if not ok:
+            return None
+        x, y = max(ok, key=lambda c: float(self.elevation[c]) + float(self.jitter[c]) * 200)
+        fort = self.add("fort", x, y)
+        fort.name, fort.ward = f"{city.name} Watch", city.name
+        self.spur(fort, 6)
+        return fort
+
     def place(self, kind: str, score: np.ndarray) -> list[Site]:
         most, spacing = self.limits[kind]
         placed = []
@@ -429,7 +450,7 @@ class Planner:
             if any(o.distance(cx, cy) == 0 for o in self.sites for cx, cy in cells):
                 continue
             port = s.kind in ("town", "village") and bool(self.ocean[max(0, x - 1): x + 2, max(0, y - 1): y + 2].any())
-            site = Site(s.kind, s.name, x, y, port, tuple(s.span))
+            site = Site(s.kind, s.name, x, y, port, tuple(s.span), getattr(s, "ward", ""))
             self.sites.append(site)
             out.append(site)
         for s in sites:              # their names stay taken, even the lost ones', so no new place reuses one
@@ -563,6 +584,9 @@ def plan_people(rng: random.Random, arrays: dict, people: float = 1.0,
     guarded = np.isin(biome, HIGH_GROUND + [B.DOWNS]) & dilate(P.road, 2) & ~P.road & ~river
     for fort in [s for s in kept if s.kind == "fort"] + P.place("fort", guarded * (P.elevation / 1500 + j + 0.3)):
         P.spur(fort, 8)
+
+    for city in [s for s in P.sites if s.kind == "city"]:
+        P.watch(city)
 
     P.place("ruins", land * (biome != B.GLACIER) * (j + 0.2 + near_road * 0.3) * ~P.road)
     edge_of_high = np.isin(biome, HIGH_GROUND) & neighbours_any(~np.isin(biome, HIGH_GROUND + [B.PEAKS]))

@@ -23,7 +23,17 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(C.calendar(8 * HOUR + 30), (1, "Spring", 1, 8, 30))
         self.assertEqual(C.calendar(C.DAYS_PER_SEASON * DAY), (1, "Summer", 1, 0, 0))
         self.assertEqual(C.calendar(C.DAYS_PER_YEAR * DAY)[0], 2)
-        self.assertEqual(C.date_text(0), "Spring 1, Year 1")
+        self.assertEqual(C.date_text(0), "Monday 1 Thaw, Year 1")
+
+    def test_twelve_months_of_four_weeks(self):
+        self.assertEqual(C.DAYS_PER_YEAR, 336)
+        self.assertEqual(len(C.MONTHS), 12)
+        self.assertEqual(C.date(27 * DAY)[1:4], ("Thaw", 28, "Sunday"))
+        self.assertEqual(C.date(28 * DAY)[1:4], ("Seedtide", 1, "Monday"))      # every month starts on a Monday
+        self.assertEqual(C.date(3 * 28 * DAY)[4], "Summer")                     # three months to a season
+        self.assertEqual(C.date(11 * 28 * DAY)[1:], ("Lastsnow", 1, "Monday", "Winter"))
+        self.assertEqual(C.weekday(6 * DAY + 10 * HOUR), "Sunday")
+        self.assertEqual(C.date_text(C.DAYS_PER_YEAR * DAY + 6 * DAY), "Sunday 7 Thaw, Year 2")
         self.assertEqual(C.clock_text(13 * HOUR + 5), "13:05")
 
 
@@ -93,3 +103,29 @@ class ShelterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HemisphereTests(unittest.TestCase):
+    """The season you're told is the one you see in the trees and feel in the air, north or south."""
+
+    def test_the_named_season_matches_the_trees_and_the_warmth_everywhere(self):
+        from game import trees
+        from game.climate import DAYS_PER_YEAR, MINUTES_PER_DAY, date, season_offset
+        for lat in (-0.5, 0.5):
+            for year in range(3):
+                for d in range(year * DAYS_PER_YEAR, (year + 1) * DAYS_PER_YEAR, 7):
+                    m = d * MINUTES_PER_DAY + 12 * 60
+                    season = date(m, lat)[4]
+                    if season == "Summer":
+                        self.assertEqual(trees.foliage(lat, m), "green", (lat, d))
+                        self.assertGreater(float(season_offset(lat, m)), 0, (lat, d))
+                    elif season == "Winter":
+                        self.assertEqual(trees.foliage(lat, m), "bare", (lat, d))
+                        self.assertLess(float(season_offset(lat, m)), 0, (lat, d))
+
+    def test_the_south_names_its_months_half_a_year_on(self):
+        from game.climate import MINUTES_PER_DAY, date
+        m = 100 * MINUTES_PER_DAY
+        north, south = date(m, -0.5), date(m, 0.5)
+        self.assertNotEqual(north[1], south[1])
+        self.assertEqual((north[0], north[2], north[3]), (south[0], south[2], south[3]))   # same day, same year

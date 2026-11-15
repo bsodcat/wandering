@@ -521,6 +521,7 @@ class UseMenuTests(unittest.TestCase):
     def test_chests_open_in_the_same_tabbed_box(self):
         lv = field()
         lv.tiles[31, 15] = T.CHEST
+        lv.unlocked.add((31, 15))                     # (some chests are locked: tests/test_locks.py)
         e = engine_on(lv)
         e.click_at(31, 15)
         e.shop.cursor = e.shop.labels().index("Open the chest")
@@ -629,3 +630,32 @@ class ArenaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TalkFromAfarTests(unittest.TestCase):
+    """Clicking someone a few tiles off: talk or trade with them where you stand."""
+
+    def person(self, e, x, y, kind="townsperson"):
+        from game.people import Actor
+        a = Actor(kind, "Wat Miller", x, y, home=[(x, y)], work=[(x, y)], evening=[(x, y)])
+        e.level.actors.append(a)
+        e.update_view()
+        return a
+
+    def talk(self, e, a):
+        return next(o for o in e.options_at(a.x, a.y) if o.label.startswith("Talk to"))
+
+    def test_three_tiles_off_you_talk_without_moving(self):
+        e = engine_on(field())
+        a = self.person(e, e.lx + 3, e.ly)
+        where, said = (e.lx, e.ly), len(e.messages)
+        self.talk(e, a).do(e)
+        self.assertEqual((e.lx, e.ly), where)
+        self.assertIsNone(e.pending)
+        self.assertGreater(len(e.messages), said)
+
+    def test_further_off_you_walk_over_first(self):
+        e = engine_on(field())
+        a = self.person(e, e.lx + 6, e.ly)
+        self.talk(e, a).do(e)
+        self.assertIsNotNone(e.pending)

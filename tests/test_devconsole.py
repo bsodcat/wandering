@@ -141,15 +141,16 @@ class ConsoleTests(unittest.TestCase):
 
 
 class ViewTests(unittest.TestCase):
-    def test_a_local_map_is_shown_whole_when_you_enter(self):
+    def test_a_local_map_shows_only_what_you_have_seen_unless_revealed(self):
         e = Engine.new(1)
         e.enter_region()
-        self.assertTrue(e.known().all())
-        self.assertFalse(e.level.explored.all())     # though you've only really seen a part
-        e.handle_key(KeySym.M)
+        self.assertFalse(e.known().all())             # only what you've seen, from the start
+        e.handle_key(KeySym.M)                        # m does nothing now
         self.assertFalse(e.known().all())
-        e.handle_key(KeySym.M)
+        e.console.run("reveal on")
         self.assertTrue(e.known().all())
+        e.console.run("reveal off")
+        self.assertFalse(e.known().all())
 
     def test_the_overworld_does_not_hide_regions_behind_high_ground(self):
         e = Engine.new(1)

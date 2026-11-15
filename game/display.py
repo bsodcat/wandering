@@ -18,6 +18,7 @@ Mouse positions come in as window pixels and go out as screen tiles, through the
 from __future__ import annotations
 
 import copy
+import functools
 
 import numpy as np
 import tcod
@@ -27,7 +28,8 @@ from tcod.cffi import ffi, lib
 from tcod.sdl.render import LogicalPresentation, ScaleMode
 
 from . import fon
-from .options import FONTS, Settings, available_fonts, font_path
+from . import glyphs
+from .options import FONTS, PIXEL_GRID, Settings, available_fonts, font_path
 from .ui import MIN_H, MIN_W, SCREEN_H, SCREEN_W
 
 
@@ -76,7 +78,29 @@ def drawn_glyphs(w: int, h: int) -> dict[str, np.ndarray]:
         if "d" in dirs:
             a[cy:, cx] = 255
         out[ch] = a
+    for n, ch in enumerate("▏▎▍▌▋▊▉", start=1):     # bars: a block filled n eighths from the left
+        a = np.zeros((h, w), np.uint8)
+        a[:, : max(1, round(w * n / 8))] = 255
+        out[ch] = a
+    r = max(1, min(w, h) // 4)                         # rounded corners: a quarter circle of radius r
+    for ch, (sx, sy) in (("╭", (1, 1)), ("╮", (-1, 1)), ("╰", (1, -1)), ("╯", (-1, -1))):
+        a = np.zeros((h, w), np.uint8)
+        ox, oy = cx + sx * r, cy + sy * r              # the circle's middle
+        for t in np.linspace(0, np.pi / 2, 4 * r + 4):
+            a[int(round(oy - sy * r * np.sin(t))), int(round(ox - sx * r * np.cos(t)))] = 255
+        if sx > 0:
+            a[cy, ox:] = 255
+        else:
+            a[cy, : ox + 1] = 255
+        if sy > 0:
+            a[oy:, cx] = 255
+        else:
+            a[: oy + 1, cx] = 255
+        out[ch] = a
     return out
+
+
+DRAWN = frozenset(drawn_glyphs(8, 16))     # glyphs every font gets drawn by hand
 
 
 def with_drawn_glyphs(tileset: tcod.tileset.Tileset) -> tcod.tileset.Tileset:
@@ -90,32 +114,24 @@ def has_ink(tileset: tcod.tileset.Tileset, ch: str) -> bool:
     return bool((tileset.get_tile(ord(ch))[..., 3] > 40).any())
 
 
-UNKNOWN = "?"           # how an item whose glyph isn't the same in every font is shown
-CP437 = frozenset(tcod.tileset.CHARMAP_CP437)
+UNKNOWN = glyphs.UNKNOWN
+CP437 = glyphs.CP437
+game_glyphs = glyphs.game_glyphs
 
 
-def game_glyphs() -> set[str]:
-    """Every glyph an item or a tile is drawn with."""
-    from . import items
-    from . import tiles as T
-    return {k.char for k in items.KINDS.values()} | {t.char for t in T.TILES}
-
-
-def uncertain(tileset: tcod.tileset.Tileset, ch: str) -> bool:
-    """Whether a glyph might not look the same in every font: it's outside the standard set
-    every font draws (CP437), so some fonts have it and some leave it blank, or this font
-    leaves it blank anyway."""
-    return ord(ch) not in CP437 or not has_ink(tileset, ch)
-
-
-def with_fallbacks(tileset: tcod.tileset.Tileset) -> tcod.tileset.Tileset:
-    """Every glyph the game draws with that isn't sure to be the same in every font is shown
-    as a question mark instead, in every font, so nothing goes invisible or changes shape when
-    you change fonts. (No item or tile is drawn with a ? of its own.)"""
+def with_fallbacks(tileset: tcod.tileset.Tileset, have=CP437) -> tcod.tileset.Tileset:
+    """Every glyph the game draws with that this font hasn't got (`have` is what it has) is
+    drawn as the closest shape it does have (glyphs.SUBSTITUTES), or failing that a question
+    mark, so nothing is ever invisible. (No item or tile is drawn with a ? of its own.)"""
+    present = {ch for ch in game_glyphs() | {s for subs in glyphs.SUBSTITUTES.values() for s in subs}
+               if len(ch) == 1 and (ord(ch) in have or ch in DRAWN) and has_ink(tileset, ch)}
     mark = np.ascontiguousarray(tileset.get_tile(ord(UNKNOWN))[..., 3])
     for ch in sorted(game_glyphs()):
-        if ch.strip() and ch != UNKNOWN and uncertain(tileset, ch):
-            tileset.set_tile(ord(ch), mark)
+        if len(ch) != 1 or not ch.strip() or ch in present:
+            continue
+        sub = next((s for s in glyphs.SUBSTITUTES.get(ch, ()) if s in present), None)
+        tile = np.ascontiguousarray(tileset.get_tile(ord(sub))[..., 3]) if sub else mark
+        tileset.set_tile(ord(ch), tile)
     return tileset
 
 
@@ -145,10 +161,58 @@ def fit_letters(path: str, w: int, h: int) -> tcod.tileset.Tileset:
     return out
 
 
+PIXEL_PROBE = 7        # big pixels to one of a pixel font's pixels, when it's sampled (libtcod draws
+                       # a font at 7/8 of the tile asked for, so a multiple of 7 lands them whole)
+
+
+@functools.lru_cache(maxsize=4)
+def pixel_glyphs(path: str, grid: tuple[int, int], codes: tuple) -> dict[int, np.ndarray]:
+    """A TrueType font drawn on a pixel grid (grid = its cell in font pixels), read back pixel
+    by pixel: libtcod's loader smooths it and lands it off the pixel grid, so it's drawn big and
+    each font pixel's middle is sampled, on or off. Returns code -> (height, width) alpha."""
+    gw, gh = grid
+    big = tcod.tileset.load_truetype_font(path, gw * PIXEL_PROBE * 8 // 7, gh * PIXEL_PROBE * 8 // 7)
+    block = big.get_tile(0x2588)[..., 3] > 127                   # the full block marks the cell
+    ys, xs = np.nonzero(block)
+    x0, y0 = xs.min(), ys.max() + 1 - gh * PIXEL_PROBE
+    px = x0 + PIXEL_PROBE // 2 + PIXEL_PROBE * np.arange(gw)
+    py = y0 + PIXEL_PROBE // 2 + PIXEL_PROBE * np.arange(gh)
+    py = np.clip(py, 0, big.tile_height - 1)
+    out = {}
+    for code in codes:
+        alpha = big.get_tile(code)[..., 3]
+        out[code] = np.where(alpha[py[:, None], px[None, :]] > 127, 255, 0).astype(np.uint8)
+    return out
+
+
+def halve(tile: np.ndarray) -> np.ndarray:
+    """A 2x-grid glyph at half the size: a pixel's on where at least half its 2x2 block is."""
+    h, w = tile.shape
+    blocks = (tile > 0).reshape(h // 2, 2, w // 2, 2).sum(axis=(1, 3))
+    return np.where(blocks >= 2, 255, 0).astype(np.uint8)
+
+
+def pixel_tileset(name: str, path: str, w: int, h: int) -> tcod.tileset.Tileset:
+    """A pixel TrueType font at w x h: its own 16x32 grid, or halved to 8x16, scaled from the
+    nearer of those for any other size, pixels repeated so it stays sharp."""
+    gw, gh = PIXEL_GRID[name]
+    codes = tuple(sorted(glyphs.wanted_codes()))
+    full = pixel_glyphs(path, (gw, gh), codes)
+    small = (w, h) != (gw, gh) and (w <= gw // 2 * 1.25 or (w, h) == (gw // 2, gh // 2))
+    tileset = tcod.tileset.Tileset(w, h)
+    for code, tile in full.items():
+        if small:
+            tile = halve(tile)
+        if tile.shape != (h, w):
+            tile = scale_tile(tile, w, h)
+        tileset.set_tile(code, np.ascontiguousarray(tile))
+    return tileset
+
+
 def make_tileset(font: str, cell: tuple[int, int]) -> tcod.tileset.Tileset:
     """The font at this tile size: bitmap fonts use their nearest size, scaled; TrueType fonts
     are drawn at the size. Falls back to Terminal, then to libtcod's own font. Glyphs that
-    aren't the same in every font are drawn as a ? (with_fallbacks)."""
+    a font hasn't got are drawn as the closest shape it has, or a ? (with_fallbacks)."""
     w, h = cell
     for name in [font] + [f for f in available_fonts() if f != font]:
         path = font_path(name)
@@ -159,8 +223,12 @@ def make_tileset(font: str, cell: tuple[int, int]) -> tcod.tileset.Tileset:
                 for code, tile in tiles.items():
                     tileset[tcod.tileset.CHARMAP_CP437[code]] = \
                         tile if (fw, fh) == (w, h) else scale_tile(tile, w, h)
-                return with_fallbacks(tileset)
-            return with_fallbacks(fit_truetype(path, w, h))
+                return with_fallbacks(with_drawn_glyphs(tileset), CP437)
+            have = glyphs.font_chars(path, False)
+            if name in PIXEL_GRID:
+                tileset = with_drawn_glyphs(pixel_tileset(name, path, w, h))
+                return with_fallbacks(tileset, have & glyphs.wanted_codes())
+            return with_fallbacks(fit_truetype(path, w, h), have)
         except Exception:
             continue
     return with_fallbacks(tcod.tileset.get_default())

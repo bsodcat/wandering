@@ -9,7 +9,8 @@ from tcod.event import KeySym, Modifier
 from game import biomes as B
 from game import structures as S
 from game import tiles as T
-from game.engine import LANTERN, Engine
+from game.engine import Engine
+from game.lights import BARE
 from game.localgen import LOCAL_H, LOCAL_W, MARGIN, draw_waterways, generate_region, make_level, terrain
 from game.worldgen import generate, travel_cost
 
@@ -311,7 +312,7 @@ class SwitchingTests(unittest.TestCase):
         self.assertTrue(e.underground)
         self.assertEqual(e.level.key, ("cave", cave.x, cave.y, 1))
         self.assertEqual(e.tile.id, T.STAIRS_UP)
-        self.assertEqual(e.sight_radius(), LANTERN)
+        self.assertEqual(e.sight_radius(), BARE)          # no torch or lantern lit: just your eyes
         e.handle_key(KeySym.COMMA, shift())          # <
         self.assertEqual(e.level.key, ("region", cave.x, cave.y))
         self.assertEqual((e.lx, e.ly), mouth)

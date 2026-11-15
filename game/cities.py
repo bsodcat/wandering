@@ -10,13 +10,28 @@ seam:
   ways, with lesser streets every so often between them; rivers are bridged
 - the blocks between the streets are packed with stone houses, each with its door to the
   street, and a market square in each part's middle
-- the trades are shared out between the parts: two inns, an armourer, a baker, a butcher and
-  a blacksmith's, and guards at the gates, archers on the walls
+- the trades are shared out between the parts: an inn in each, an armourer, a baker, a butcher
+  and a blacksmith's, and guards at the gates, archers on the walls
+- each part has a guardhouse, guards at its street crossings, and its own landmarks
+  (game/landmarks.py): the keep with its throne room, great hall, library, barracks and
+  dungeon; a temple and the gallows; a playhouse and a fighting pit; or the guildhall, an
+  alchemist's and a market row; the city garden inside a gate; a lower quarter of timber
+  hovels in the outer corner of two of the parts; and trees along the main streets, on the
+  banks and out beyond the walls
 
-A fort stands on high ground over a highway: a square stone curtain wall with towers at the
-corners and one gate toward the road, and inside a barracks, a smithy with a forge and an
+A fort stands on high ground over a highway, and a smaller one (the city's watch) in a region
+next to every city: a square stone curtain wall with towers at the corners and one gate toward
+the road, and inside a barracks, a smithy with a forge and an
 anvil, a store of weapons, a well, and archery butts along a wall. Guards keep the gate,
 archers watch from the walls, and the blacksmith works the forge (and sells what's made).
+
+A city keeps back from open water (any body of it more than 3 x 3 across: a lake, the sea, a
+broad river): nothing's built within SHORE tiles of it (10 to 15, by the city), so a river through
+a city runs between open green banks, crossed by the streets on bridges. Where the water runs
+along a part's outer side, the city wall there comes in to keep that far off it (by MOST_PULL
+tiles at most), so a city by a lake or the sea is smaller and shaped by the shore. A short spur
+of wall along the border with the next part closes the gap if that part's wall stands further
+out.
 
 Half the towns and villages (and every city and fort) have felled the woods around them long
 ago: the trees within a few dozen tiles are stumps and open grass.
@@ -24,9 +39,11 @@ ago: the trees within a few dozen tiles are stumps and open grass.
 from __future__ import annotations
 
 import random
+import zlib
 
 import numpy as np
 
+from . import landmarks as L
 from . import tiles as T
 from . import trees
 from .level import Place
@@ -35,8 +52,12 @@ from .structures import (EDGE, building, connect, furnish, hang_torch, inn_build
 INSET_X, INSET_Y = 10, 6     # the city wall's distance in from the city's outer edge
 SEAM = 2                     # half the width of the street along a border between parts
 STREET_EVERY = (40, 18)      # tiles between the lesser streets, across and down
-TRADES = [("inn", "armoury"), ("bakery", "smithy"), ("butcher", "inn"), ("smithy", "armoury")]   # by part
+TRADES = [("inn", "armoury"), ("inn", "bakery", "smithy"), ("inn", "butcher"), ("inn", "smithy", "armoury")]   # by part
 FORT = (27, 12)              # the fort's half-width and half-height inside its wall
+WATCH_FORT = (24, 11)        # a city's watch fort, a little smaller
+SHORE = (10, 15)             # tiles a city keeps back from open water (by the city)
+MOST_PULL = (70, 40)         # how far in a city wall comes for water along its side, across and down
+ALONG = 0.25                 # ... if the water runs along this much of the side
 
 
 # ----------------------------------------------------------------- clearing
@@ -73,12 +94,117 @@ def city_bounds(level, site) -> tuple[int, int, int, int]:
             w - 1 - INSET_X if px == sw - 1 else w - 1, h - 1 - INSET_Y if py == sh - 1 else h - 1)
 
 
+def dilate(m: np.ndarray, r: int) -> np.ndarray:
+    """Grows a mask r tiles every way (8 neighbours a step)."""
+    out = m.copy()
+    for _ in range(r):
+        g = out.copy()
+        g[1:, :] |= out[:-1, :]
+        g[:-1, :] |= out[1:, :]
+        g[:, 1:] |= out[:, :-1]
+        g[:, :-1] |= out[:, 1:]
+        g[1:, 1:] |= out[:-1, :-1]
+        g[:-1, :-1] |= out[1:, 1:]
+        g[1:, :-1] |= out[:-1, 1:]
+        g[:-1, 1:] |= out[1:, :-1]
+        out = g
+    return out
+
+
+def open_water(t: np.ndarray) -> np.ndarray:
+    """Water in bodies more than 3 x 3 across: every water tile joined to one with water all
+    round it."""
+    water = T.WATERY[t]
+    core = np.zeros_like(water)
+    core[1:-1, 1:-1] = np.logical_and.reduce([water[1 + dx: water.shape[0] - 1 + dx, 1 + dy: water.shape[1] - 1 + dy]
+                                              for dx in (-1, 0, 1) for dy in (-1, 0, 1)])
+    body = core
+    for _ in range(2000):
+        grown = dilate(body, 1) & water
+        if (grown == body).all():
+            break
+        body = grown
+    return body
+
+
+def shore_of(site) -> int:
+    return SHORE[0] + zlib.crc32(site.name.encode()) % (SHORE[1] - SHORE[0] + 1)
+
+
+def pull_in(bounds, big: np.ndarray, band: int, part, span) -> tuple[int, int, int, int]:
+    """The bounds, with each outer side brought in to keep `band` tiles off water that runs
+    along it."""
+    x0, y0, x1, y1 = bounds
+    px, py = part
+    sw, sh = span
+    reach_x, reach_y = MOST_PULL
+    def depth(strip: np.ndarray) -> int | None:
+        """How far into a strip (axis 0 inward) the water along it reaches, if it's along enough of it."""
+        rows = strip.any(axis=0)
+        if rows.mean() < ALONG:
+            return None
+        deepest = [int(np.nonzero(strip[:, k])[0].max()) for k in np.nonzero(rows)[0]]
+        return int(np.percentile(deepest, 90))
+    if px == 0:
+        d = depth(big[x0: x0 + reach_x, y0: y1 + 1])
+        if d is not None:
+            x0 = min(x0 + reach_x, x0 + d + band + 1)
+    if px == sw - 1:
+        d = depth(big[x1 - reach_x + 1: x1 + 1, y0: y1 + 1][::-1])
+        if d is not None:
+            x1 = max(x1 - reach_x, x1 - d - band - 1)
+    if py == 0:
+        d = depth(big[x0: x1 + 1, y0: y0 + reach_y].T)
+        if d is not None:
+            y0 = min(y0 + reach_y, y0 + d + band + 1)
+    if py == sh - 1:
+        d = depth(big[x0: x1 + 1, y1 - reach_y + 1: y1 + 1].T[::-1])
+        if d is not None:
+            y1 = max(y1 - reach_y, y1 - d - band - 1)
+    return x0, y0, x1, y1
+
+
+def spurs(level, site, bounds) -> None:
+    """Where this part's wall has come in from the city's edge, a wall along its border with the
+    next part, out to that edge, so the wall's closed whichever of them stands further out."""
+    px, py = site.part(*level.region)
+    sw, sh = site.span
+    x0, y0, x1, y1 = bounds
+    ox0, oy0, ox1, oy1 = city_bounds(level, site)
+    t = level.tiles
+    w, h = level.width, level.height
+    rows = ([0] if py > 0 else []) + ([h - 1] if py < sh - 1 else [])
+    cols = ([0] if px > 0 else []) + ([w - 1] if px < sw - 1 else [])
+    runs_ = []
+    if px == 0 and x0 > ox0:
+        runs_ += [((x, y) for x in range(ox0, x0 + 1)) for y in rows]
+    if px == sw - 1 and x1 < ox1:
+        runs_ += [((x, y) for x in range(x1, ox1 + 1)) for y in rows]
+    if py == 0 and y0 > oy0:
+        runs_ += [((x, y) for y in range(oy0, y0 + 1)) for x in cols]
+    if py == sh - 1 and y1 < oy1:
+        runs_ += [((x, y) for y in range(y1, oy1 + 1)) for x in cols]
+    for run in runs_:
+        for c in run:
+            if t[c] in (T.ROAD, T.STREET, T.BRIDGE):
+                t[c] = T.STREET if t[c] != T.BRIDGE else T.BRIDGE     # a gate where a road goes through
+            elif not T.WATERY[t[c]]:
+                t[c] = T.STONE_WALL
+
+
 def build_city(level, site, rng: random.Random, land=None) -> None:
     px, py = site.part(*level.region)
     sw, sh = site.span
     t = level.tiles
     w, h = level.width, level.height
-    x0, y0, x1, y1 = city_bounds(level, site)
+    big = open_water(t)
+    band = shore_of(site)
+    trees_here = L.tree_kind(level)
+    x0, y0, x1, y1 = pull_in(city_bounds(level, site), big, band, (px, py), site.span)
+    outside = np.ones(t.shape, bool)
+    outside[x0 + 2: x1 - 1, y0 + 2: y1 - 1] = False
+    banks = dilate(big, band) & ~big
+    level._keep_off = banks | outside    # the banks, and beyond the wall: nothing's built there
     clear_woods(level, rng, 400)
     inside = np.zeros(t.shape, bool)
     inside[x0: x1 + 1, y0: y1 + 1] = True
@@ -95,28 +221,64 @@ def build_city(level, site, rng: random.Random, land=None) -> None:
         lay(t, slice(x0 + 1, x1), slice(h - SEAM // 2 - 1, h))
     lay(t, slice(cx - 1, cx + 1), slice(y0, y1 + 1))
     lay(t, slice(x0, x1 + 1), slice(cy, cy + 1))
+    xs, ys = [], []
     for x in range(cx % STREET_EVERY[0], w, STREET_EVERY[0]):
         if x0 + 6 < x < x1 - 6 and abs(x - cx) > 8:
             lay(t, slice(x, x + 2), slice(y0 + 1, y1))
+            xs.append(x)
     for y in range(cy % STREET_EVERY[1], h, STREET_EVERY[1]):
         if y0 + 4 < y < y1 - 4 and abs(y - cy) > 4:
             lay(t, slice(x0 + 1, x1), slice(y, y + 1))
+            ys.append(y)
     walls(level, site, rng, (x0, y0, x1, y1))
-    # the market, the trades, then houses wherever they'll go
+    spurs(level, site, (x0, y0, x1, y1))
+    # the keep first (it needs the most room), the market, the trades and landmarks, then
+    # houses wherever they'll go
+    plan = L.plan_of(site, (px, py))
+    if "keep" in plan:
+        L.build_keep(level, site, rng, (x0, y0, x1, y1), (px, py))
     square(level, 9, 4, stalls=8)
+    L.adorn_square(level, fountain="keep" not in plan)
     doors = []
-    for trade in TRADES[(py * sw + px) % len(TRADES)]:
+    near_square = [(cx - 24, cy - 10), (cx + 24, cy - 10), (cx - 24, cy + 10), (cx + 24, cy + 10)]
+    for i, trade in enumerate(TRADES[(py * sw + px) % len(TRADES)]):
+        size = {"inn": (14, 8), "smithy": (10, 7)}.get(trade, (9, 7))
+        spot = L.plot(level, *size, near_square[i % len(near_square)])     # the nearest room to the square
+        box = (*spot, *size) if spot else None
+        if box is None:
+            continue
         if trade == "inn":
-            doors.append(inn_building(level, rng, (12, 30)))
+            doors.append(inn_building(level, rng, (12, 30), box=box))
         elif trade == "smithy":
-            doors.append(smithy(level, rng, (12, 34)))
+            doors.append(smithy(level, rng, (12, 34), box=box))
         else:
             name = {"armoury": "the armourer's", "bakery": "the bakery", "butcher": "the butcher's"}[trade]
-            doors.append(shop(level, rng, trade, name, (12, 34)))
+            doors.append(shop(level, rng, trade, name, (12, 34), box=box))
     for d in doors:
         if d is not None:
             connect(level, d, ways(level), T.STREET)
-    fill_blocks(level, rng, (x0, y0, x1, y1))
+    L.guardhouse(level, rng, (cx + 22, cy + 9))
+    spots = [(cx - 52, cy - 30), (cx + 52, cy + 30), (cx - 52, cy + 30), (cx + 52, cy - 30)]
+    for i, feature in enumerate(f for f in plan if f != "keep"):
+        if feature == "market":
+            L.market_row(level, rng)
+        else:
+            getattr(L, feature)(level, rng, spots[i % len(spots)])
+    if "temple" not in plan:
+        L.chapel(level, rng, (cx + 30, cy - 22))
+    if (px, py) == L.garden_part(site):
+        L.garden(level, rng)
+    L.crossings(level, xs, ys)
+    slums = None
+    if L.lower_quarter(site, (px, py)):          # the outer corner, away from the middle of the city
+        sx0 = x0 if px == 0 else cx + 12
+        sx1 = cx - 12 if px == 0 else x1
+        sy0 = y0 if py == 0 else cy + 6
+        sy1 = cy - 6 if py == 0 else y1
+        slums = (sx0, sy0, sx1, sy1)
+    fill_blocks(level, rng, (x0, y0, x1, y1), slums)
+    L.plant_trees(level, rng, (x0, y0, x1, y1), trees_here, banks)
+    level._keep_off = None
 
 
 def walls(level, site, rng: random.Random, bounds) -> None:
@@ -206,13 +368,29 @@ def runs(cells: list) -> list[list]:
     return out
 
 
-def fill_blocks(level, rng: random.Random, bounds) -> None:
-    """Stone houses packed into the blocks between the streets, doors to the street."""
+def fill_blocks(level, rng: random.Random, bounds, slums=None) -> None:
+    """Stone houses packed into the blocks between the streets, doors to the street; in the
+    lower quarter (`slums`, a box), small timber hovels crowded closer together."""
     x0, y0, x1, y1 = bounds
     t = level.tiles
+    def lower(x, y):
+        return slums is not None and slums[0] <= x <= slums[2] and slums[1] <= y <= slums[3]
     for y in range(max(y0 + 2, EDGE + 1), min(y1 - 1, level.height - EDGE - 1)):
         x = max(x0 + 2, EDGE + 1)
         while x < min(x1 - 1, level.width - EDGE - 1):
+            if lower(x, y):
+                w, h = rng.randint(5, 6), rng.randint(4, 5)
+                if fits(level, x, y, w, h):
+                    street = nearest_street(level, x, y, w, h)
+                    door, outside = building(level, rng, x, y, w, h, street, wall=T.WALL, floor=T.WOOD_FLOOR,
+                                             torch=False, name="a hovel")
+                    furnish(level, rng, x, y, w, h, beds=0, hearth=rng.random() < 0.4, tables=0,
+                            barrels=rng.randint(0, 1), extra=((T.BEDROLL, rng.randint(1, 2)),))
+                    step_out(level, outside, street)
+                    x += w + 1
+                else:
+                    x += 1
+                continue
             w, h = rng.randint(7, 11), rng.randint(5, 7)
             if fits(level, x, y, w, h):
                 street = nearest_street(level, x, y, w, h)
@@ -245,6 +423,9 @@ def fits(level, x: int, y: int, w: int, h: int) -> bool:
     t = level.tiles
     if x - 1 < EDGE or y - 1 < EDGE or x + w >= level.width - EDGE or y + h >= level.height - EDGE:
         return False
+    off = getattr(level, "_keep_off", None)
+    if off is not None and off[x - 1: x + w + 1, y - 1: y + h + 1].any():
+        return False                      # on the banks of open water
     area = t[x - 1: x + w + 1, y - 1: y + h + 1]
     if not np.isin(area, [T.GRASS, T.DIRT, T.STUMP, T.DRY_GRASS, T.SAND, T.MUD]).all():
         return False
@@ -264,11 +445,11 @@ def nearest_street(level, x: int, y: int, w: int, h: int) -> tuple[int, int]:
     return best
 
 
-def smithy(level, rng: random.Random, ring, centre=None):
+def smithy(level, rng: random.Random, ring, centre=None, box=None):
     """A blacksmith's: a forge, an anvil, a rack of what's been made and a chest of stock."""
     from .structures import place_box
-    box = (place_box(level, rng, ((9, 11), (6, 7)), ring, centre)
-           or place_box(level, rng, ((8, 9), (5, 6)), (ring[0], ring[1] + 14), centre))
+    box = box or (place_box(level, rng, ((9, 11), (6, 7)), ring, centre)
+                  or place_box(level, rng, ((8, 9), (5, 6)), (ring[0], ring[1] + 14), centre))
     if box is None:
         return None
     x0, y0, w, h = box
@@ -284,7 +465,7 @@ def smithy(level, rng: random.Random, ring, centre=None):
 def build_fort(level, site, rng: random.Random, land=None) -> None:
     t = level.tiles
     cx, cy = middle(level)
-    rx, ry = FORT
+    rx, ry = WATCH_FORT if getattr(site, "ward", "") else FORT
     clear_woods(level, rng, 60)
     xs, ys = np.ogrid[: level.width, : level.height]
     yard = (abs(xs - cx) <= rx + 4) & (abs(ys - cy) <= ry + 2)

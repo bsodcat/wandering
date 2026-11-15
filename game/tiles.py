@@ -52,7 +52,7 @@ TILES = [
     Tile(25, "bed", "Θ", (200, 120, 110), (70, 48, 30), minutes=1.0, roof=True, natural=False),
     Tile(26, "table", "π", (200, 150, 90), (70, 48, 30), walk=False, roof=True, natural=False),
     Tile(27, "hearth", "☼", (255, 160, 60), (110, 40, 20), walk=False, roof=True, natural=False),
-    Tile(28, "well", "o", (150, 190, 230), (80, 80, 85), walk=False, natural=False),
+    Tile(28, "well", "⊚", (150, 190, 230), (80, 80, 85), walk=False, natural=False),
     Tile(29, "market stall", "∩", (230, 170, 80), (110, 60, 40), walk=False, natural=False),
     Tile(30, "vegetable garden", '"', (210, 190, 80), (85, 70, 30), minutes=1.0, natural=False),
     Tile(31, "fence", "#", (150, 110, 70), (55, 42, 30), walk=False, natural=False),
@@ -84,7 +84,7 @@ TILES = [
     Tile(55, "dug earth", "░", (150, 110, 70), (78, 55, 34), minutes=0.8, natural=False),   # grows back after rain
     Tile(56, "bedroll", "⌐", (175, 140, 95), (35, 32, 28), minutes=0.8, roof=True, natural=False),   # a goblin's bed
     Tile(57, "weapon rack", "╫", (195, 195, 210), (70, 48, 30), walk=False, roof=True, natural=False),
-    Tile(58, "chest", "▄", (205, 150, 70), (60, 42, 26), walk=False, roof=True, natural=False),
+    Tile(58, "chest", "⊟", (205, 150, 70), (60, 42, 26), walk=False, roof=True, natural=False),
     # volcanic ground (game/volcanoes.py)
     Tile(59, "basalt", ".", (120, 110, 108), (42, 38, 38), minutes=0.8),
     Tile(60, "ash", ".", (165, 160, 155), (88, 85, 82), minutes=0.9),
@@ -92,8 +92,27 @@ TILES = [
     # forts and cities (game/cities.py), and the carts between towns (game/carts.py)
     Tile(62, "forge", "■", (255, 120, 50), (90, 35, 20), walk=False, roof=True, natural=False),
     Tile(63, "anvil", "╤", (170, 170, 180), (60, 58, 56), walk=False, roof=True, natural=False),
-    Tile(64, "archery target", "◙", (230, 80, 70), (75, 65, 50), walk=False, natural=False),
+    Tile(64, "archery target", "◎", (230, 80, 70), (75, 65, 50), walk=False, natural=False),
     Tile(65, "cart", "╥", (190, 140, 80), (70, 50, 32), walk=False, natural=False),
+    # a stone city's keep, temple, playhouse, gallows and squares (game/cities.py)
+    Tile(66, "throne", "h", (255, 210, 90), (120, 30, 40), walk=False, roof=True, natural=False),
+    Tile(67, "bookshelf", "║", (190, 120, 80), (60, 40, 26), walk=False, see=False, roof=True, natural=False),
+    Tile(68, "iron bars", "╪", (175, 175, 185), (40, 38, 36), walk=False, roof=True, natural=False),
+    Tile(69, "gallows", "Γ", (175, 135, 90), (75, 73, 70), walk=False, natural=False),
+    Tile(70, "stocks", "┬", (175, 135, 90), (75, 73, 70), walk=False, natural=False),
+    Tile(71, "stage", "▒", (190, 140, 85), (95, 62, 36), minutes=0.4, roof=True, natural=False),
+    Tile(72, "bench", "=", (175, 130, 80), (60, 45, 30), minutes=1.0, roof=True, natural=False),
+    Tile(73, "altar", "☩", (240, 225, 170), (90, 85, 80), walk=False, roof=True, natural=False),
+    Tile(74, "fountain", "Φ", (170, 210, 245), (70, 90, 120), walk=False, natural=False),
+    Tile(75, "statue", "&", (205, 205, 200), (85, 82, 78), walk=False, natural=False),
+    Tile(76, "carpet", ".", (215, 90, 90), (110, 28, 36), minutes=0.4, roof=True, natural=False),
+    Tile(77, "junk", "%", (160, 135, 100), (62, 50, 36), minutes=2.0, roof=True, natural=False),   # an empty house's
+    Tile(78, "flower bed", "*", (235, 130, 175), (45, 80, 32), minutes=1.0, natural=False),
+    Tile(79, "campfire", "Җ", (255, 170, 60), (60, 34, 18), walk=False, natural=False),
+    Tile(80, "ashes", "∴", (130, 125, 120), (45, 42, 40), natural=False),
+    Tile(81, "ore vein", "£", (200, 170, 120), (55, 50, 46), walk=False, see=False, natural=False),
+    Tile(82, "chasm", "░", (40, 38, 44), (4, 4, 6), walk=False, natural=False),
+    Tile(83, "fissure", "░", (70, 58, 46), (8, 6, 5), walk=False, natural=False),
 ]
 assert all(t.id == i for i, t in enumerate(TILES))
 ID = {t.name: t.id for t in TILES}
@@ -103,7 +122,9 @@ ID = {t.name: t.id for t in TILES}
  BED, TABLE, HEARTH, WELL, STALL, CROPS, FENCE, DOCK, RUBBLE, CAVE_FLOOR, CAVE_WALL, STAIRS_DOWN,
  STAIRS_UP, BATTLEMENT, BARREL, DRY_GRASS, REEDS, FLAGSTONES, TORCH, WHEAT, RYE, RICE, MILLET, OVEN,
  COUNTER, HOOKS, SIGN, WOODPILE, STUMP, TROUGH, DUG, BEDROLL, RACK, CHEST, BASALT, ASH, LAVA,
- FORGE, ANVIL, TARGET, CART) = range(len(TILES))
+ FORGE, ANVIL, TARGET, CART, THRONE, BOOKSHELF, BARS, GALLOWS, STOCKS, STAGE, BENCH, ALTAR, FOUNTAIN,
+ STATUE, CARPET, JUNK, FLOWERS, CAMPFIRE, ASHES, ORE_VEIN, CHASM, FISSURE) = range(len(TILES))
+DROPS = (CHASM, FISSURE)                      # you can fall into these (game/ravines.py)
 CONTAINERS = (BARREL, CHEST)                  # things you open: game/shop.py's Container
 GRAINS = [WHEAT, RYE, RICE, MILLET]
 FIELDS = GRAINS + [CROPS]

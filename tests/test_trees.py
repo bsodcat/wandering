@@ -8,7 +8,7 @@ from tcod.event import KeySym
 from game import biomes as B
 from game import tiles as T
 from game import trees
-from game.climate import MINUTES_PER_DAY, DAYS_PER_SEASON
+from game.climate import DAYS_PER_SEASON, DAYS_PER_YEAR, MIDSUMMER, MINUTES_PER_DAY
 from game.engine import Engine
 from game.localgen import LOCAL_H, LOCAL_W, MARGIN, draw_waterways, generate_region, make_level, terrain
 from game.worldgen import generate
@@ -178,3 +178,40 @@ class EngineTreeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TurningTests(unittest.TestCase):
+    """The leaves change over a week, tree by tree, not all at once."""
+
+    def boundary(self, lat, before, after):
+        """The first day (from midsummer on) the unhurried trees look `after`, having looked `before`."""
+        day = MINUTES_PER_DAY
+        start = int(MIDSUMMER * DAYS_PER_YEAR)
+        for d in range(start, start + DAYS_PER_YEAR):
+            if trees.foliage(lat, d * day) == after and trees.foliage(lat, (d - 1) * day) == before:
+                return d
+        self.fail(f"no change from {before} to {after}")
+
+    def test_autumn_spreads_over_a_week(self):
+        lat, day = 0.5, MINUTES_PER_DAY
+        d = self.boundary(lat, "green", "autumn")
+        gx, gy = np.meshgrid(np.arange(200), np.arange(100), indexing="ij")
+        delay = trees.turn_delay(gx, gy)
+        self.assertTrue(((delay >= 0) & (delay < 1)).all())
+        share = [(trees.foliage(lat, (d + k) * day + day // 2, delay) == "autumn").mean()
+                 for k in range(trees.TURNING_DAYS + 1)]
+        self.assertTrue(0.0 < share[0] < 0.4, share)                  # the first few turn on the day
+        self.assertTrue(0.3 < share[3] < 0.8, share)                  # half or so midweek
+        self.assertEqual(share[-1], 1.0)                              # all of them by a week on
+        self.assertEqual(share, sorted(share))                        # and none turns back
+        self.assertTrue((trees.foliage(lat, (d - 1) * day, delay) == "green").all())
+
+    def test_a_tile_changes_once_and_neighbours_stay_close(self):
+        delay = trees.turn_delay(np.arange(60)[:, None], np.arange(30)[None, :])
+        self.assertEqual(delay.shape, (60, 30))
+        np.testing.assert_array_equal(delay, trees.turn_delay(np.arange(60)[:, None], np.arange(30)[None, :]))
+        self.assertLess(np.abs(np.diff(delay, axis=0)).mean(), 0.4)   # a grove shares half its delay
+
+    def test_the_tropics_stay_green(self):
+        looks = trees.foliage(0.05, 100 * MINUTES_PER_DAY, np.zeros((3, 3)))
+        self.assertTrue((looks == "green").all())

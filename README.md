@@ -90,6 +90,7 @@ stairs lead nowhere; leave by Esc, then Main menu.
 | `i` | the Inv tab: what you carry | same |
 | `e` | | the use menu: what you can do here and next to you (talk, trade, pet, attack, open a barrel or chest, sleep, pick up, eat, wield, wear) |
 | `q` | | the equipment menu: your weapon and what you wear in each place, and what it all adds up to |
+| `k` | | the crafting menu: a campfire, a torch, a rope grapple |
 | walk into... | | a person: talk (or trade, if they trade); a dog or cat: pet it; a creature: strike it; a tree, with an axe: fell it |
 | Tab | right panel: Info, Map, Log, Inv, hidden | same |
 | `c` | show or hide the stats panel | same |
@@ -98,7 +99,6 @@ stairs lead nowhere; leave by Esc, then Main menu.
 | point with the mouse | the sidebar's Look panel describes that region | the Look panel describes that tile |
 | left click | note what's there in the log | note what's there in the log |
 | hold right button | walk there over regions you know | walk there over ground you know |
-| `m` | reveal the whole map (for development) | the whole map (on when you arrive) or only what you've seen |
 | Esc | pause menu: Resume, Options, Main menu, Quit | same |
 | `` ` `` | the dev console | same |
 | F11 or Alt+Enter | windowed / fullscreen | same |
@@ -138,8 +138,8 @@ at once and are saved to `%APPDATA%/newrogue/settings.json`:
 | Setting | Choices |
 | --- | --- |
 | Display | Windowed, Fullscreen (also F11 or Alt+Enter) |
-| Font | Terminal (the Windows bitmap font), Consolas, Lucida Console, Courier New |
-| Font size | Auto, or 6x12 to 20x40: the size of a tile, drawn at exactly that many pixels. Auto keeps Terminal at its own 10x20 when the default 120x45 screen fits, and otherwise picks the biggest size that does |
+| Font | Classic Console Neue (the default, by DeeJayy, MIT license: fonts/LICENSE-clacon2.txt; comes with the game, drawn pixel by pixel on its 16x32 grid, crisp at 8x16 and 16x32), Terminal (the Windows bitmap font), BigBlue Terminal (a bitmap font that comes with the game, by VileR, CC BY-SA 4.0), Consolas, Lucida Console, Courier New. A font without one of the game's glyphs draws the closest shape it has (a dagger's † becomes ┼, the rain's ☂ becomes ↓, a chest's ⊟ becomes ▄), or else a ? (`game/glyphs.py`) |
+| Font size | Auto, or 6x12 to 20x40: the size of a tile, drawn at exactly that many pixels. Auto keeps Classic Console Neue at its own 16x32 (or 8x16), Terminal at its 10x20 and BigBlue Terminal at its 8x12 when the default 120x45 screen fits, and otherwise picks the biggest size that does |
 | Scale | Auto, 1x, 2x, 3x, 4x. Always a whole number with every pixel repeated, so small fonts stay pixel-sharp. Auto is the biggest at which the default 120x45 screen fits the window; whatever room is left becomes more tiles |
 
 The window starts at the default screen's size times the scale (within the usable part of
@@ -189,7 +189,8 @@ python -m unittest discover -s tests
    - Villages near roads and water, each with a track out to the nearest road or settlement.
    - Inns every 24 regions or so along long highways.
    - Watchtowers on hills and mountains within sight of a road.
-   - **Forts** on hills, downs and mountains beside the highways.
+   - **Forts** on hills, downs and mountains beside the highways, and a smaller watch fort
+     in a region next to every city.
    - Ruins out in the country and caves where high ground meets low.
    - Towns and villages on the sea are ports.
 
@@ -198,8 +199,16 @@ python -m unittest discover -s tests
 
 **Simulation** (`game/climate.py`) is a pure function of place and time, so nothing needs saving:
 
-- A 120-day year: four 30-day seasons. The south has summer while the north has winter, and
-  seasons swing harder toward the poles. Days are long in summer and short in winter.
+- **The calendar**: a 336-day year of twelve 28-day months, each four weeks of seven days
+  (Monday to Sunday, so every month starts on a Monday), three months to a season:
+  - Spring: Thaw, Seedtide, Blossom
+  - Summer: Highsun, Haymonth, Goldmonth
+  - Autumn: Reaping, Leaffall, Mistmonth
+  - Winter: Frost, Deepwinter, Lastsnow
+
+  The panel shows the day ("Sunday 14 Highsun"), then the season and the year. The south has
+  summer while the north has winter, and seasons swing harder toward the poles. Days are long
+  in summer and short in winter.
 - Weather is 3D noise drifting east, so fronts move across the map. Clouds build over wet ground,
   rain falls under the thickest (snow at 0 °C or below), and storms bring wind. Mountains are
   windier, and fog settles on calm, damp mornings.
@@ -227,15 +236,81 @@ from a plan that depends only on where the part sits, so the parts meet without 
   the roads come in and halfway along each part's sides, with torches and guards.
 - Broad streets run along the borders between the parts and through each part's middle, with
   lesser streets every so often. Rivers are bridged.
+- A city keeps back from open water (any lake, sea or river more than 3 x 3 across). Nothing is
+  built within 10 to 15 tiles of it (the distance depends on the city), so a broad river runs
+  between open, tree-lined banks. Where the water runs along a part's outer side, the wall there
+  comes in to keep that far off it, so a city by a lake or the sea is smaller and shaped by the
+  shore. A short spur of wall along the border between parts closes any gap.
 - Stone houses fill the blocks, each with its door to a street, and there's a market square in
-  each part.
-- The trades are shared out between the parts: two inns, armourers, a bakery, a butcher's and
-  two smithies. Archers walk the walls.
+  each part: stalls round its edge, statues, and a fountain in the middle (a well in the
+  keep's part).
+- Every house that somebody lives in is furnished. The rest have been emptied and heaped with
+  junk (a few odds and ends among it). Some cities also have abandoned houses: the door gone,
+  the walls and roof partly fallen in.
+- **The lower quarter**: in the outer corner of two of the parts, small timber hovels crowd
+  together in place of stone houses.
+- **The city garden**, just inside a gate: a hedge round flower beds, gravel walks crossing at a
+  fountain, benches and trees.
+- **Trees**: an avenue along each part's main streets, trees on the banks of open water, and a
+  scattering out beyond the walls.
+- Every part has an inn and a guardhouse. The other trades are shared out between the parts:
+  armourers, a bakery, a butcher's and two smithies. Archers walk the walls.
+- Each part has its own landmarks (`game/landmarks.py`):
+  - **The keep**: a walled castle in the quarter toward the middle of the city, its gate facing
+    the square. Inside are the **throne room** (a carpet up to the throne, braziers and
+    statues), the **great hall** (long tables and benches, and a high table), the **royal
+    chambers**, the **library** (shelved wall to wall), the keep's **barracks**, and the **gaol**.
+    Its stairs go down to **the dungeon**: a passage between barred cells, with prisoners in some
+    and a gaoler on watch. The courtyard has a well, gardens and archery butts.
+  - A **temple** (an altar between two braziers, and pews), and the **gallows yard** (a gallows
+    up on its platform, and a row of stocks). A part without the temple has a small **chapel**.
+  - A **playhouse** (a stage and benches), and a **fighting pit** ringed by a fence.
+  - The **guildhall**, an **alchemist's**, and a **market row** of stalls along the main street.
+
+**City folk** (`game/citylife.py`). Each part of a city has 120 to 140 people:
+- Craftsfolk (weavers, tailors, potters, chandlers, coopers, cobblers, scribes and carpenters),
+  each living and working in a house, at hours of their own.
+- **Homemakers**: nearly half the craftsfolk are married. Their husband or wife stays home and
+  keeps house, cooking breakfast, dinner and supper for them ("preparing supper for Lena"), and
+  the craftsperson comes home for supper instead of going to the inn. Townsfolk with a house of
+  their own get married the same way.
+- **Children** of some of those families, who play tag in little bands of two to four. Whoever's
+  "it" runs after the nearest of the others, and the others scatter when it comes close. A tag,
+  and the tagged one's it, after counting to three (no tag-backs). Each band plays about one
+  spot for an hour or so (a street, the square, the garden), then moves on.
+- Townsfolk with no trade, who wander the city at times of their own. Mostly they walk the
+  streets all over town, and now and then they go to the stalls, the temple, the gallows, the
+  garden, the market row, the crossings, the playhouse and the pit. In the evening they go to
+  the inn, moving on every 40 minutes or so.
+- In the lower quarter's hovels: labourers, washerwomen and a ratcatcher (out after dark). The
+  beggars and thieves sleep there too.
+- Beggars in the square and at the temple doors.
+- **Sunday service** (09:00-11:00): the priest leads it at the temple or chapel. Most of the
+  people living nearest set off an hour before, as many as it holds. The guards, the thieves and
+  the inn's staff stay at their posts.
+- Merchants at the stalls. They sell everyday goods (bread, fish, rope, oil, blankets...) and buy
+  trinkets.
+- Whoever keeps the landmarks: a priest, a bard and mummers (on stage in the evening), pit
+  fighters, a hangman, a guildmaster, and an alchemist who sells oils and candles and pays well
+  for strange things out of the crypts.
+- In the keep: a **king or a prince**, with a **queen or a concubine**, who keep a court's hours.
+  They break their fast and feast in the great hall, hold court in the throne room in the
+  morning, and spend the afternoon in the library and the gardens. The royal guard stands by the
+  throne and at the keep gate. A cook, a librarian and servants keep the household.
+- **Thieves**, who pass for townsfolk. Now and then, when no guard is near, one picks the pocket
+  of someone out in the street. The victim often cries "Thief!", and the nearest guards on duty
+  give chase. A guard who catches up hauls the thief off to the gaol, but a thief who stays
+  ahead for 40 minutes gets away. Each new day the city's thieves are back up to their number.
+  If you see a thief at it, you know them for what they are.
+- **Guards** at the gates (two at each), one at each of the nearest street crossings, and two
+  more for every thief. A third of them keep the night watch, and they sleep in the
+  guardhouse.
 
 **Forts** stand over the highways. Each has a square stone curtain wall with corner towers and
 one gate toward the road. Inside are a barracks, a smithy (forge, anvil, racks), the stores, a
 well and archery targets. Four guards keep the gate, three archers watch from the walls, and a
-blacksmith works the forge.
+blacksmith works the forge. A city's watch fort, in a region next to the city, is a little
+smaller, with three guards and two archers.
 
 **Guards and archers** (`game/guards.py`) fight on duty: guards strike at wolves, goblins and
 bats within two steps, and archers shoot at any they can see within 9 tiles.
@@ -340,13 +415,24 @@ opens: Up/Down or the mouse to choose, Enter to trade, Esc to leave.
 - An **innkeeper** serves hot soup for 4 coins: it warms you, and treats wolf fever.
 - A town's **shopkeeper** (at the armourer's, 08:00-18:00) sells common weapons and armour,
   and buys trinkets and rings.
-- A shop that buys as well as sells (the shopkeeper's and the blacksmith's) has a **Buy** tab
+- In a city, a **merchant** at a stall (08:00-18:00) sells everyday goods, each stall its own
+  handful, and buys trinkets. The **alchemist** sells oils and candles, and buys strange things
+  out of the crypts (black candles, bone flutes, sealed scrolls...).
+- A shop that buys as well as sells (the shopkeeper's, the blacksmith's, a merchant's and the
+  alchemist's) has a **Buy** tab
   and a **Sell** tab at the top. Left/Right, Tab or a click on a tab switches between them.
 - A shop's list shows up to 15 rows at a time, and scrolls (Up/Down, PgUp/PgDn, Home/End or
   the mouse wheel) when there are more.
 - A **barkeeper** lets a room upstairs for 8 coins. You get a room key, good till 10:00 the
   next morning. Sleep (`z`) in any bed upstairs and you sleep till 07:00, waking rested.
   Without a key the beds are off limits.
+
+An inn holds **eight people at most**, the innkeeper and barkeeper among them. Whoever's
+already inside keeps their place. The rest walk the streets instead (or go to the green, in a
+town or village), or go home if it's late.
+
+Every house in a town or village has someone living in it: if there aren't tradespeople
+enough, townsfolk move in, who go about the green and the inn and their own houses.
 
 **Inns** have two more floors: stairs up to a corridor of guest rooms with a bed in each, and
 down to a stone cellar of barrels. Each inn has an innkeeper (07:00-21:00) and a barkeeper
@@ -356,8 +442,57 @@ down to a stone cellar of barrels. Each inn has an innkeeper (07:00-21:00) and a
 talk to someone, trade, pet a dog, attack a creature, open a barrel, sleep or rest in a bed,
 pick things up, take the stairs, fell a tree, dig, eat, wield a weapon, wear armour or open the
 equipment menu. Pick
-something out of reach and you walk over to it first (a walk stops if a creature's in the
+something out of reach and you walk over to it first, except talking and trading: anyone you can see
+within 3 tiles you call over to where you stand (a walk stops if a creature's in the
 way: it never starts a fight). Clicking on plain ground still just notes it in the log.
+
+**Crafting** (`k`, `game/crafting.py`). A **campfire** takes 2 logs and a flint and is laid on open
+ground beside you: it burns 8 hours, lights the ground around it and warms you (+15°C) within 2
+tiles, then leaves ashes. A **torch** is a strip of cloth round a stick, soaked in pitch, animal fat
+or a flask of oil (the best you carry). A **rope grapple** is a coil of rope and 3 iron nails. Logs
+come from felling trees, 1 to 3 sticks fall round each tree you fell (and a few lie in the woods),
+flint lies about on stony ground and turns up when you break rock; cloth, pitch, fat and oil are
+sold (the weaver, merchants, the shopkeeper), and butchering any carcass with a blade gives fat.
+
+**Light** (`game/lights.py`). With nothing lit you see 3 tiles in a cave or on a dark night; a lit
+**torch** 6, a **lantern** 9. A torch burns 2 to 16 hours: bought, 6; made, as long as its fuel
+(pitch 5, fat 3, oil 7), and more fuel adds as much again up to 16. When it's about to go out
+and you carry oil or fat, you feed it without stopping; otherwise it gutters out. Heavy rain burns
+it faster. A lantern is only bought (the smith, the shopkeeper): it burns oil (10 hours a flask)
+or fat (5), refills itself the same way, ignores the rain, and keeps its fuel when you put it out.
+Light, put out and fuel them from the use menu; what's left shows under your bars.
+
+**Horses** (`game/horses.py`). Every inn keeps a paddock of horses, and so do about half the
+towns, with a stablehand selling horses (60 coins, led out into the paddock, yours) and saddles
+(15; the shopkeeper has them too). A paddock horse can be saddled and ridden off by anyone with a
+saddle: then it's yours. Click a horse to saddle it, ride it or take the saddle off; click
+yourself (or the use menu) to get down or to call a horse within 3 regions, which trots up
+beside you when it gets there. Riding, a step on open ground takes 0.4 of the time and the
+overworld 0.45 (0.6 on roads). You can't ride indoors, underground, up rock or over an edge:
+through a door or down stairs you get down and leave the horse there. Your horses blink as an
+**H** on the world map wherever you left them.
+
+**Mining** (`game/mining.py`). With a pickaxe (the smith, the shopkeeper) walk into a boulder, a
+rock outcrop or a cave wall to break it (unless you're wearing climbing gear, which climbs it; the
+use menu breaks it either way). Every region has its own ore table, deeper rock richer: flint,
+coal and copper at the surface; iron, tin and coal a level or two down; iron and silver deeper;
+gold and jewels at the bottom. Ore showing in the rock (**£**, the colour of its ore) always gives
+it. The smith buys copper, tin and iron ore and coal.
+
+**Caves and ravines** (`game/ravines.py`). Caves go 3 to 5 levels down now, and some levels are
+split by a **chasm**; some hills, mountains, downs and volcanoes are cracked by a **fissure**. Step
+toward either and you stop at the edge with a warning; step again and you fall (and get hurt): a
+chasm drops you to the cave level below, a fissure to the bottom of a **ravine**, a narrow canyon
+open to the sky. The only way out of a ravine is a **rope grapple**, thrown up to the rim by
+daylight (not at night, and your torch won't do). Walks never route over an edge.
+
+**Locks** (`game/locks.py`). About a third of the houses in a settlement keep their doors locked
+(their people have keys), and some chests are locked: a few at home and in shops, more in crypts,
+most in caves, harder the deeper. A lockpick (3 coins at the armourer's or the blacksmith's) lets
+you pick one from the use menu or with a click. The pins catch in an order of their own: push the
+binding pin and it sets with a click; the others feel springy, and pushing them may snap the pick;
+push a set pin again and they all drop. Simple locks have 3 pins, sturdy 4, intricate 5. From inside
+a house you can always unbar its door.
 
 **Barrels** hold things: food in cellars and houses, odds and ends in sheds, loot in a goblin
 camp. **Chests** sit in most houses and every shop, holding household things, the tools of
@@ -387,17 +522,18 @@ cut by your armour.
 | axe, shovel, rusty dagger, crude knife | 2-6, 1-4, 1-3, 1-4 |
 
 **Equipment** (`game/gear.py`, `q`). Besides the weapon in your hand you can wear one thing in
-each of seven places, and the shopkeeper sells all of it. The equipment menu shows what's in
+each of eight places, and the shopkeeper sells all of it. The equipment menu shows what's in
 each place, what it does and what everything adds up to. Enter on a place lists what you carry
 that would go there.
 
 | Place | Pieces (coins) | What they do |
 | --- | --- | --- |
-| Head | leather cap (3), iron helm (10), fur hat (5), straw hat (2) | the helm is armour; the hats are warm, or shade you from the sun |
-| Cloak | wool cloak (6), oilskin cloak (10), fur cloak (14) | warmth, and keep the rain off you (oilskin best) |
-| Body | padded jerkin (6), leather coat (12), mail shirt (30), fur coat (18) | armour 1, 2, 3, 1; mail is heavy and cold, fur very warm |
+| Head | leather cap (3), iron helm (10), fur hat (5), straw hat (2), wool hood (4) | the helm is armour; the hats are warm, or shade you from the sun |
+| Cloak | wool cloak (6), oilskin cloak (10), fur cloak (14), wolfskin cloak (16) | warmth, and keep the rain off you (oilskin best) |
+| Body | padded jerkin (6), leather coat (12), mail shirt (30), fur coat (18), sheepskin coat (14) | armour 1, 2, 3, 1, 1; mail is heavy and cold, fur and sheepskin warm |
+| Under | linen shirt (3), wool shirt (5), quilted underclothes (10) | worn beneath the body piece: warmth +1, +3, +5, even under mail |
 | Shield | wooden shield (6), iron-bound shield (14) | turn aside one blow in six, or one in four |
-| Hands | leather gloves (4), fur mittens (5) | gloves grip better when climbing; mittens are warm but clumsy |
+| Hands | leather gloves (4), fur mittens (5), wool mittens (3) | gloves grip better when climbing; mittens are warm but clumsy |
 | Feet | leather boots (6), hobnailed boots (9), fur-lined boots (10) | quicker over rough ground and snow; fur-lined are warm |
 | Harness | climbing gear (20) | climb rock |
 
@@ -406,6 +542,11 @@ to stop a blow completely), **warmth** (°C on top of your everyday clothes), **
 share of rain and snow kept off you), **footing** (time saved on slow ground and in lying snow,
 and off the road on the overworld), **grip** (climbing) and **burden** (heavy gear makes every
 step and every blow more tiring).
+
+In a city the **weaver** sells woollens and the **tailor** sells every warm thing. The tailor also
+buys wolf pelts (3 coins each) and will make two of them into a wolfskin cloak for 4 coins. To get
+a pelt, carry a wolf carcass and a blade (a dagger, sword, knife or axe) and pick **Skin a wolf
+carcass** from the use menu.
 
 **Climbing.** With climbing gear on you can climb onto boulders and rock outcrops (cliffs in the
 hills and mountains, the rock over a cave mouth, a crater rim) and go up or down a rise of three
@@ -567,7 +708,7 @@ or an item or creature name, PageUp/PageDown or the mouse wheel scroll, and Esc 
 | `time pause`, `time resume` | stop the clock (you can still walk about), start it again |
 | `weather <kind/auto>` | clear, cloudy, overcast, fog, rain, storm, snow, blizzard |
 | `tp <x> <y>` | to a tile on this map, or a region on the overworld |
-| `reveal [on/off]`, `where`, `seed`, `clear` | |
+| `reveal [on/off]`, `where`, `seed`, `clear` | `reveal` shows the whole map, the overworld and every local map (you only see what you've explored otherwise) |
 
 The stats panel shows God mode, Noclip and Clock paused while they're on.
 
@@ -580,6 +721,8 @@ game/biomes.py     biome table: looks, travel time, shelter
 game/localgen.py   region local maps: seamless terrain, rivers, roads
 game/structures.py towns, villages, inns, docks, towers, ruins, caves, and the levels below and above
 game/cities.py     stone cities over 2 x 2 regions, forts, cleared woods
+game/landmarks.py  a city's keep, dungeon, temple, playhouse, gallows, pit, guildhall, guardhouses
+game/citylife.py   a city's people: craftsfolk, townsfolk, the court, thieves and the guards
 game/guards.py     guards and archers fighting off what comes near
 game/carts.py      carts between the towns, and riding them
 game/tiles.py      local tile table: looks, walking, sight, step time, roofs

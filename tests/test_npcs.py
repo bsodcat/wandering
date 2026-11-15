@@ -51,11 +51,13 @@ class ClimateTests(unittest.TestCase):
         self.assertEqual(farming.herd_for(land(-3, 0.5, B.TUNDRA)), "reindeer")
 
     def test_fields_go_through_the_year(self):
-        stages = [farming.crop_stage(-0.5, d * MINUTES_PER_DAY) for d in range(120)]
+        from game.climate import DAYS_PER_YEAR
+        midsummer = int(0.375 * DAYS_PER_YEAR)
+        stages = [farming.crop_stage(-0.5, d * MINUTES_PER_DAY) for d in range(DAYS_PER_YEAR)]
         self.assertEqual(set(stages), {"shoots", "growing", "ripe", "stubble", "fallow"})
-        self.assertEqual(stages[45], "ripe")                                          # midsummer, north
-        self.assertEqual(farming.crop_stage(0.5, 45 * MINUTES_PER_DAY), "fallow")     # midwinter, south
-        self.assertEqual({farming.crop_stage(0.05, d * MINUTES_PER_DAY) for d in range(120)}, {"growing"})
+        self.assertEqual(stages[midsummer], "ripe")                                          # midsummer, north
+        self.assertEqual(farming.crop_stage(0.5, midsummer * MINUTES_PER_DAY), "fallow")     # midwinter, south
+        self.assertEqual({farming.crop_stage(0.05, d * MINUTES_PER_DAY) for d in range(DAYS_PER_YEAR)}, {"growing"})
 
     def test_villages_grow_their_climates_grain(self):
         w = world(1)
@@ -83,7 +85,7 @@ class BuildingTests(unittest.TestCase):
     def test_roadside_inns_get_the_same_inn_and_horses(self):
         for s, lvl in site_levels("inn"):
             self.assertTrue(any(b.kind == "inn" for b in lvl.buildings), s.name)
-            self.assertEqual({a.kind for a in lvl.actors}, {"innkeeper", "barkeeper", "horse"})
+            self.assertEqual({a.kind for a in lvl.actors}, {"innkeeper", "barkeeper", "stablehand", "horse"})
 
     def test_pastures_are_fenced_with_a_trough(self):
         for s, lvl in site_levels("village"):
@@ -119,7 +121,7 @@ class PeopleTests(unittest.TestCase):
             lvl.sim_minutes = None               # placed fresh for each hour
             people.advance(lvl, 40 * MINUTES_PER_DAY + hour * 60, e, random.Random(1))
             for a in lvl.actors:
-                if a.animal:
+                if a.animal or a.haunts:             # (townsfolk with no trade go their own ways)
                     continue
                 expected = a.home if where == "home" else a.work
                 self.assertIn((a.x, a.y), expected, (a.kind, hour))

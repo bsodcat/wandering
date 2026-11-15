@@ -97,7 +97,7 @@ class CityTests(unittest.TestCase):
         kinds, people_ = set(), set()
         for c in s.cells:
             lv = level(("region", *c))
-            houses = [b for b in lv.buildings if b.kind == "house"]
+            houses = [b for b in lv.buildings if b.kind == "house" and "hovel" not in b.name]   # (hovels are timber)
             self.assertGreater(len(houses), 100)
             self.assertEqual(lv.tiles[houses[0].x0, houses[0].y0], T.STONE_WALL)
             kinds |= {b.kind for b in lv.buildings}
@@ -130,7 +130,7 @@ class CityTests(unittest.TestCase):
 
 class FortTests(unittest.TestCase):
     def fort(self):
-        s = next(s for s in world().sites if s.kind == "fort")
+        s = next(s for s in world().sites if s.kind == "fort" and not s.ward)
         return s, level(("region", s.x, s.y))
 
     def test_a_fort_has_its_garrison(self):
@@ -145,7 +145,7 @@ class FortTests(unittest.TestCase):
 
     def test_forts_stand_on_high_ground_by_the_roads(self):
         w = world()
-        for s in (s for s in w.sites if s.kind == "fort"):
+        for s in (s for s in w.sites if s.kind == "fort" and not s.ward):   # (a city's watch: game/landmarks.py)
             self.assertIn(int(w.biome[s.x, s.y]), (B.HILLS, B.MOUNTAINS, B.DOWNS))
 
     def test_the_blacksmith_sells_and_buys_old_iron(self):

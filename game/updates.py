@@ -22,6 +22,23 @@ TIMEOUT = 8          # seconds
 
 # What's new, newest first: (version, headline, [what changed])
 NOTES = [
+    ("1.4.0-beta.2", "Beta test: living cities, crafting, horses and mining", [
+        "Stone cities come alive: craftsfolk, townsfolk, beggars, merchants, homemakers and children at play.",
+        "A keep in every city (throne room, great hall, library, barracks, a dungeon) and its court.",
+        "Thieves who pick pockets and guards who chase them; guardhouses with bunks, an armoury upstairs and a lockup below.",
+        "Temples, playhouses, fighting pits, the gallows, guildhalls, alchemists, market rows and a watch fort by every city.",
+        "A calendar of twelve 28-day months, Sunday service, and seasons named for the hemisphere you're in.",
+        "Crafting (k): campfires from logs and flint, torches, rope grapples. Flint and sticks lie about; felled trees drop sticks.",
+        "Torches (6 tiles, 2-16 hours) and lanterns (9 tiles) that burn oil, pitch or animal fat and top themselves up.",
+        "Horses: buy one from a stablehand or saddle a paddock horse, ride twice as fast, call it from 3 regions away.",
+        "A pickaxe to break rock, an ore table for every region and depth, and ore veins in the caves.",
+        "Caves 3 to 5 levels deep with chasms; fissures in the hills that drop you into a ravine (a grapple gets you out).",
+        "Locked doors and chests, lockpicks, and a lock-picking game.",
+        "Warm clothes: an underlayer slot, wool, sheepskin and wolfskin; tailors and weavers; skin wolves for pelts.",
+        "Classic Console Neue is the new default font, pixel-sharp, with new glyphs for items, the weather and smooth bars.",
+        "Talk or trade with people up to 3 tiles away; leaves turn over a week; remembered ground fades by height.",
+        "Fixed: taking the inn stairs from a click crashed the game.",
+    ]),
     ("1.4.0-beta.1", "Beta test: cities, forts and carts", [
         "Stone cities spanning four regions, with walls, gates, guards and archers.",
         "Forts on the high ground over the highways: guards, archers and a blacksmith.",

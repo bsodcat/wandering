@@ -705,7 +705,10 @@ class Wilds:
         sees_you = self.you is not None and self.sees(c, self.you)
         if sees_you:
             if c.state not in ("fight", "flee"):
-                self.say(f"The {c.name} spots you and shrieks the alarm!", (c.x, c.y), stop=True)
+                if self.visible((c.x, c.y)):
+                    self.say(f"The {c.name} spots you and shrieks the alarm!", stop=True)
+                else:                                     # out in the dark: you hear it all the same
+                    self.say("Something shrieks the alarm out in the dark!", stop=True)
                 self.noise((c.x, c.y), 12)
                 c.state = "fight"
             c.target, c.seen_at = YOU, self.you
